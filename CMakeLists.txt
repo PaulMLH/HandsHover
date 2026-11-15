@@ -6,8 +6,8 @@ project(HandsHover)
 # Extension meta-information
 set(EXTENSION_HOMEPAGE "https://github.com/VOTRE-COMPTE/SlicerHandsHover")
 set(EXTENSION_CATEGORY "IGT")
-set(EXTENSION_CONTRIBUTORS "TODO: votre nom (votre établissement)")
-set(EXTENSION_DESCRIPTION "Touchless control of Slicer views with hand gestures captured by a webcam (MediaPipe hand tracking): slice scrolling, window/level, 3D view rotation/pan/zoom and a mouse mode. Research use only.")
+set(EXTENSION_CONTRIBUTORS "Dr Paul Martre (Le Havre, France)")
+set(EXTENSION_DESCRIPTION "One-handed touchless control of Slicer views with hand gestures filmed by an ordinary webcam (MediaPipe hand tracking): switch views, scroll slices, zoom, window/level, rotate and pan the 3D view. Designed for sterile settings. Research use only.")
 set(EXTENSION_ICONURL "https://raw.githubusercontent.com/VOTRE-COMPTE/SlicerHandsHover/main/HandsHover.png")
 set(EXTENSION_SCREENSHOTURLS "")
 set(EXTENSION_DEPENDS "NA") # Specified as a list or "NA" if no dependencies

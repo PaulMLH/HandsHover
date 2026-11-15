@@ -1,10 +1,10 @@
-# Modèle de suivi des mains
+# Hand-tracking model
 
-Placer ici `hand_landmarker.task` (modèle MediaPipe Hand Landmarker, ~8 Mo, licence Apache 2.0)
-pour l'embarquer dans l'extension et fonctionner sans internet.
+Put `hand_landmarker.task` here (MediaPipe Hand Landmarker model, ~8 MB, Apache 2.0 license)
+to bundle it with the extension and work without an internet connection.
 
-Sans ce fichier, le module propose au premier lancement de le télécharger depuis Google
-ou de choisir un fichier déjà présent sur le PC (par exemple celui du prototype).
+Without this file, on first use the module offers to download it from Google
+or to select a file already present on the computer.
 
-Source officielle :
+Official source:
 https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
