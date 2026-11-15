@@ -8,7 +8,7 @@ without touching anything.
 > **Research tool. Not a medical device, not validated for clinical use.**
 > Camera images are processed locally on this computer; nothing is sent anywhere.
 
-![HandsHover icon](HandsHover.png)
+![HandsHover demo: one hand controls the 3D and slice views](docs/handshover-demo.gif)
 
 ## Features
 
@@ -45,14 +45,23 @@ rotation, pan sensitivity and smoothing.
 
 A swipe changes the view only once per V: open the hand before the next swipe.
 
-## Installation (development)
+## Installation
 
-1. 3D Slicer ≥ 5.10 (Python 3.12).
-2. *Edit → Application Settings → Modules → Additional module paths*: add the `HandsHover` folder
-   (the one containing `HandsHover.py`), then restart Slicer.
-3. Open **HandsHover** (category IGT), click **Refresh**, then **Start gesture control**.
-   On first use the module asks before installing `mediapipe` (and OpenCV if needed) and
-   the hand model (`hand_landmarker.task`, ~8 MB): download it from Google or select an existing file.
+You need **3D Slicer 5.10 or later** (free, [slicer.org](https://www.slicer.org)) and a webcam.
+
+1. **Download** HandsHover: open the [Releases page](../../releases/latest) and click
+   **Source code (zip)** under *Assets*.
+2. **Extract** the zip file, for example to `C:\HandsHover`. Inside, you will find a folder
+   named `HandsHover` that contains `HandsHover.py`.
+3. **Add it to Slicer**: in Slicer, *Edit → Application Settings → Modules*. Next to
+   *Additional module paths*, click the arrow / *Add*, select that `HandsHover` folder
+   (the one containing `HandsHover.py`), click *OK* and restart Slicer.
+4. **Open the module**: press *Ctrl+F* and type **HandsHover** (it is also in the *IGT* category).
+5. **First start**: click **Refresh**. Slicer asks to install MediaPipe — accept and wait a few minutes.
+   Then click **Start gesture control**. When asked for the hand model, choose **Download**
+   (about 8 MB, internet needed once).
+6. Load some images (for example *File → Sample Data → CTChest*), tick **Show camera image**
+   and hold your hand 40–80 cm from the webcam.
 
 ## Tests
 
