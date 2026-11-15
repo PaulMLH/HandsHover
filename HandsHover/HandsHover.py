@@ -224,8 +224,6 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
         settingsForm.addRow(self.invertScrollCheck)
         self.resetSettingsButton = qt.QPushButton("Restore defaults")
         settingsForm.addRow(self.resetSettingsButton)
-        self.selfTestButton = qt.QPushButton("Test the gesture engine (no camera)")
-        settingsForm.addRow(self.selfTestButton)
 
         # ---- Help
         helpBox = ctk.ctkCollapsibleButton()
@@ -256,7 +254,6 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
         self.invertScrollCheck.connect("toggled(bool)", lambda v: self.onSettingChanged("invertScroll", v))
         self.previewCheck.connect("toggled(bool)", self.onPreviewToggled)
         self.resetSettingsButton.connect("clicked()", self.onResetSettings)
-        self.selfTestButton.connect("clicked()", self.onSelfTest)
 
     def cleanup(self):
         if hasattr(self, "logic") and self.logic:
@@ -420,16 +417,6 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
         self.statusLabel.setText("Stopped." if not error else f"Stopped: {error}")
         if error:
             slicer.util.errorDisplay(f"Hand tracking stopped:\n{error}")
-
-    def onSelfTest(self):
-        from HandsHoverLib.selftests import run_all
-        lines = []
-        failures = run_all(log=lines.append)
-        text = "\n".join(lines)
-        if failures:
-            slicer.util.errorDisplay("Some tests failed:\n\n" + text)
-        else:
-            slicer.util.infoDisplay("All gesture engine tests passed.\n\n" + text)
 
 
 # ======================================================================== logic
