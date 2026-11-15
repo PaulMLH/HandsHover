@@ -161,7 +161,7 @@ def test_3d_actions():
     ev = s.run(1.2, ("thumb_up",) + CTRL) + s.rest()
     assert ("recenter",) in ev, "thumb up held 1 s = recenter"
     assert len(_kinds(ev, "recenter")) == 1
-    assert not _kinds(s.events, "scroll") and not _kinds(s.events, "wl")
+    assert not _kinds(s.events, "scroll") and not _kinds(s.events, "slice_pan")
 
 
 def test_slice_actions_and_acceleration():
@@ -176,10 +176,10 @@ def test_slice_actions_and_acceleration():
     ev = s.go("fist", move=(0.0, -0.2))
     assert _product(ev, "slice_zoom") > 1.5, "fist moving up = zoom in on the slice"
     ev = s.go("index", move=(0.1, 0.05))
-    assert _kinds(ev, "wl"), "index finger + move = window / level"
+    assert _kinds(ev, "slice_pan"), "index finger + move = pan the slice"
     ev = s.run(1.2, ("thumb_up",) + CTRL) + s.rest()
     assert ("slice_fit", "Red") in ev, "thumb up held 1 s = recenter the slice view"
-    assert not _kinds(s.events, "rotate") and not _kinds(s.events, "zoom")
+    assert not _kinds(s.events, "rotate") and not _kinds(s.events, "zoom") and not _kinds(s.events, "pan")
 
 
 def test_other_hand_is_ignored():

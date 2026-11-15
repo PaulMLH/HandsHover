@@ -2,7 +2,7 @@
 
 Touchless, one-handed control of 3D Slicer with hand gestures filmed by an ordinary webcam
 (Google MediaPipe hand tracking). Designed for sterile settings such as the operating room:
-switch views, scroll slices, zoom, adjust window/level, rotate and pan the 3D view —
+switch views, scroll slices, zoom and pan, rotate the 3D view —
 without touching anything.
 
 > **Research tool. Not a medical device, not validated for clinical use.**
@@ -25,7 +25,7 @@ without touching anything.
 
 **HandsHover** (category IGT): starts the webcam hand tracking and turns gestures into
 view commands. Settings for scrolling speed and acceleration, swipe distance, zoom,
-rotation, pan, window/level sensitivity and smoothing.
+rotation, pan sensitivity and smoothing.
 
 ## Gestures
 
@@ -41,7 +41,7 @@ rotation, pan, window/level sensitivity and smoothing.
 | 3D | Index finger + move | Pan the model |
 | 2D | Pinch + up/down | Scroll slices (faster gesture = accelerated) |
 | 2D | Fist + up/down | Zoom in / out |
-| 2D | Index finger + move | Window (horizontal) / level (vertical) |
+| 2D | Index finger + move | Pan the slice |
 
 A swipe changes the view only once per V: open the hand before the next swipe.
 

@@ -73,6 +73,8 @@ class SlicerActions:
                 self.scroll(event[1], event[2])
             elif kind == "wl":
                 self.windowLevel(event[1], event[2], event[3])
+            elif kind == "slice_pan":
+                self.slicePan(event[1], event[2], event[3])
             elif kind == "slice_fit":
                 self.sliceFit(event[1])
             elif kind == "slice_zoom":
@@ -107,6 +109,20 @@ class SlicerActions:
             logic.SnapSliceOffsetToIJK()
         except Exception:
             pass
+
+    def slicePan(self, view, dx, dy):
+        """Pans a slice view in its plane. Hand to the right = image to the right."""
+        logic = self.sliceLogic(view)
+        if logic is None:
+            return
+        node = logic.GetSliceNode()
+        fov = node.GetFieldOfView()
+        sliceToRAS = node.GetSliceToRAS()
+        for i in range(3):
+            # column 0 = slice x axis (to the right), column 1 = slice y axis (up)
+            shift = -dx * fov[0] * sliceToRAS.GetElement(i, 0) + dy * fov[1] * sliceToRAS.GetElement(i, 1)
+            sliceToRAS.SetElement(i, 3, sliceToRAS.GetElement(i, 3) + shift)
+        node.UpdateMatrices()
 
     def sliceFit(self, view):
         """Recenters a slice view: fits the displayed volume to the view."""

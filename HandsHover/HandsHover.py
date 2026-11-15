@@ -47,7 +47,6 @@ DEFAULT_SETTINGS = {
     "scrollStep": 2.0,         # % of image height per slice (slow gesture)
     "scrollAccel": 4.0,        # maximum multiplier for a fast gesture
     "swipeDistance": 15.0,     # % of image width for a V swipe
-    "contrastGain": 1.0,
     "rotateGain": 180.0,
     "zoomGain": 1.0,
     "panGain": 1.0,
@@ -71,7 +70,7 @@ the other hand is ignored (except for the two-fist pause).<br>
 <tr><td colspan="2"><b>Slice views (Red, Green, Yellow)</b></td></tr>
 <tr><td>Pinch + up/down</td><td>Scroll slices (faster gesture = accelerated)</td></tr>
 <tr><td>Fist + up/down</td><td>Zoom in / out</td></tr>
-<tr><td>Index finger + move</td><td>Window (horizontal), level (vertical)</td></tr>
+<tr><td>Index finger + move</td><td>Pan the slice</td></tr>
 </table>
 """
 
@@ -134,8 +133,8 @@ class HandsHover(ScriptedLoadableModule):
         self.parent.contributors = [AUTHOR]
         self.parent.helpText = (
             "Touchless, one-handed control of Slicer views with hand gestures filmed by an ordinary "
-            "webcam (MediaPipe hand tracking): switch views, scroll slices, zoom, window/level, "
-            "rotate and pan the 3D view. Camera images are processed locally and never sent anywhere. "
+            "webcam (MediaPipe hand tracking): switch views, scroll slices, zoom and pan, "
+            "rotate the 3D view. Camera images are processed locally and never sent anywhere. "
             "Research tool, not validated for clinical use.<br><br>"
             f"Created by {AUTHOR}.")
         self.parent.acknowledgementText = (
@@ -212,11 +211,10 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
                   "Maximum scrolling multiplier for a fast gesture (1 = no acceleration).")
         addSlider("swipeDistance", "V swipe:", 5.0, 35.0, 1.0, 0, " %",
                   "Horizontal distance (in % of the image width) to change view. Larger = fewer accidental changes.")
-        addSlider("contrastGain", "Window/level:", 0.1, 3.0, 0.1, 1, " x", "Window / level sensitivity.")
         addSlider("rotateGain", "3D rotation:", 45, 540, 15, 0, " deg",
                   "Rotation in degrees for a full traversal of the image.")
         addSlider("zoomGain", "Zoom:", 0.2, 3.0, 0.1, 1, " x", "Zoom sensitivity.")
-        addSlider("panGain", "3D pan:", 0.2, 3.0, 0.1, 1, " x", "Pan sensitivity.")
+        addSlider("panGain", "Pan:", 0.2, 3.0, 0.1, 1, " x", "Pan sensitivity (3D and slice views).")
         addSlider("smoothing", "Smoothing:", 0.3, 5.0, 0.1, 1, "",
                   "Smaller = steadier but slower; larger = more responsive but more jitter.")
 
@@ -577,7 +575,6 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
         e.slice_zoom_gain = 3.0 * s["zoomGain"]
         e.pan_gain = s["panGain"]
         self.pipeline.set_filter(min_cutoff=s["smoothing"])
-        self.actions.wl_gain = s["contrastGain"]
 
     # ---------------------------------------------------------- start/stop
     def start(self, camera, preview=True):
@@ -825,6 +822,9 @@ class HandsHoverTest(ScriptedLoadableModuleTest):
         fov0 = sliceNode.GetFieldOfView()[0]
         actions.sliceZoom("Red", 2.0)
         self.assertAlmostEqual(sliceNode.GetFieldOfView()[0], fov0 / 2.0, places=3)
+        origin0 = sliceNode.GetSliceToRAS().GetElement(0, 3)
+        actions.slicePan("Red", 0.1, 0.0)
+        self.assertNotAlmostEqual(sliceNode.GetSliceToRAS().GetElement(0, 3), origin0)
         actions.sliceFit("Red")
         self.assertAlmostEqual(sliceNode.GetFieldOfView()[0], fov0, delta=fov0 * 0.05)
 

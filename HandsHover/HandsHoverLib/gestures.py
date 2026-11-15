@@ -14,7 +14,7 @@ Gestures
                  index finger + move        -> pan
     Slice views  pinch + up/down            -> scroll slices (faster gesture = accelerated)
                  fist + up/down             -> zoom
-                 index finger + move        -> window (horizontal) / level (vertical)
+                 index finger + move        -> pan the slice
 
 Events produced (tuples):
     ("mode", view, paused)            view = "3D" | "Red" | "Green" | "Yellow"
@@ -22,7 +22,7 @@ Events produced (tuples):
     ("action", kind | None)           continuous action in progress (for display)
     ("scroll", view, n)               n slices (+ = hand moving up)
     ("slice_zoom", view, factor)      > 1 = zoom in
-    ("wl", view, dx, dy)              window / level (normalized hand displacement)
+    ("slice_pan", view, dx, dy)       pan a slice view (normalized hand displacement)
     ("slice_fit", view)               recenter a slice view
     ("rotate", d_azimuth, d_elevation)   degrees
     ("pan", dx, dy)                   normalized hand displacement
@@ -47,7 +47,7 @@ HOLD_LABELS = {
 
 # controlling-hand pose -> continuous action, per view type
 ENGAGE_3D = {"fist": "zoom", "pinch": "rotate", "index": "pan", "v": "swipe"}
-ENGAGE_SLICE = {"pinch": "scroll", "fist": "slice_zoom", "index": "wl", "v": "swipe"}
+ENGAGE_SLICE = {"pinch": "scroll", "fist": "slice_zoom", "index": "slice_pan", "v": "swipe"}
 
 ACTION_LABELS = {
     "zoom": "zoom",
@@ -56,7 +56,7 @@ ACTION_LABELS = {
     "swipe": "change view",
     "scroll": "scroll",
     "slice_zoom": "zoom",
-    "wl": "window / level",
+    "slice_pan": "pan",
 }
 
 
@@ -260,9 +260,9 @@ class GestureEngine:
         elif kind == "slice_zoom":
             if dy:
                 events.append(("slice_zoom", self.mode, math.exp(-dy * cfg.slice_zoom_gain)))
-        elif kind == "wl":
+        elif kind == "slice_pan":
             if dx or dy:
-                events.append(("wl", self.mode, dx, dy))
+                events.append(("slice_pan", self.mode, dx * cfg.pan_gain, dy * cfg.pan_gain))
         elif kind == "zoom":
             if dy:
                 events.append(("zoom", math.exp(-dy * cfg.zoom_gain)))
