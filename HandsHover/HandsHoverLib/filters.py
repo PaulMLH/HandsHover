@@ -1,7 +1,7 @@
-"""Filtre « One-Euro » : lisse le tremblement à basse vitesse sans ajouter de retard
-quand la main bouge vite (Casiez et al., CHI 2012).
+"""One-Euro filter: smooths jitter at low speed without adding lag when the hand
+moves fast (Casiez et al., CHI 2012).
 
-Python pur, aucune dépendance.
+Pure Python, no dependency.
 """
 
 import math

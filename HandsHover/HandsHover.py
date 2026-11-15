@@ -19,14 +19,15 @@ from slicer.ScriptedLoadableModule import (
 )
 
 from HandsHoverLib.actions import SlicerActions
-from HandsHoverLib.gestures import MOUSE, GesturePipeline
+from HandsHoverLib.gestures import GesturePipeline
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 TRACKER_SCRIPT = os.path.join(MODULE_DIR, "HandsHoverLib", "tracker_process.py")
-REQUIREMENTS_FILE = os.path.join(MODULE_DIR, "Resources", "requirements.txt")
 BUNDLED_MODEL = os.path.join(MODULE_DIR, "Resources", "Models", "hand_landmarker.task")
 MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
              "hand_landmarker/float16/latest/hand_landmarker.task")
+
+AUTHOR = "Dr Paul Martre - Le Havre - France"
 
 MEDIAPIPE_REQUIREMENT = "mediapipe>=0.10.31"
 OPENCV_REQUIREMENT = "opencv-python-headless"
@@ -41,53 +42,40 @@ DEFAULT_SETTINGS = {
     "cameraName": "",
     "cameraIndex": 0,
     "cameraBackend": -1,
-    "invertHands": False,
     "invertScroll": False,
     "preview": True,
-    "scrollStepSlow": 2.0,     # % de la hauteur d'image par coupe
-    "scrollStepFast": 0.5,
-    "contrastGain": 1.0,
+    "scrollStep": 2.0,         # % of image height per slice (slow gesture)
+    "scrollAccel": 4.0,        # maximum multiplier for a fast gesture
+    "swipeDistance": 15.0,     # % of image width for a V swipe
     "rotateGain": 180.0,
     "zoomGain": 1.0,
     "panGain": 1.0,
     "smoothing": 1.5,
-    "mouseZoneSize": 1.0,
-    "clickMaxMs": 400.0,
     "modelPath": "",
 }
 
-BASE_MOUSE_ZONE = (0.40, 0.15, 0.95, 0.80)
-
 GESTURES_HTML = """
-<p><b>Pince</b> = signe « OK » (pouce et index joints, trois autres doigts tendus).
-Les gestes « maintenus » remplissent une jauge dans le bandeau.</p>
+<p>Everything is done <b>with one hand</b>: the first hand seen controls Slicer,
+the other hand is ignored (except for the two-fist pause).<br>
+<b>Pinch</b> = OK sign (thumb and index touching, the other three fingers extended).</p>
 <table border="0" cellspacing="2" cellpadding="3">
-<tr><td colspan="2"><b>Partout</b></td></tr>
-<tr><td>Deux index levés, 1 s</td><td>Pause / reprise</td></tr>
-<tr><td>Index gauche levé, 0,5 s</td><td>Vue suivante : 3D → Red → Green → Yellow</td></tr>
-<tr><td>V gauche, 0,5 s</td><td>Entrer / sortir du mode souris</td></tr>
-<tr><td colspan="2"><b>Vue 3D</b></td></tr>
-<tr><td>Poing gauche + déplacer</td><td>Rotation</td></tr>
-<tr><td>Poing droit + déplacer</td><td>Déplacer le modèle</td></tr>
-<tr><td>Pince gauche + haut/bas</td><td>Zoom rapide</td></tr>
-<tr><td>Pince droite + haut/bas</td><td>Zoom fin</td></tr>
-<tr><td>Index droit levé, 1 s</td><td>Recentrer</td></tr>
-<tr><td colspan="2"><b>Vues 2D (Red, Green, Yellow)</b></td></tr>
-<tr><td>Pince gauche + haut/bas</td><td>Défilement rapide</td></tr>
-<tr><td>Pince droite + haut/bas</td><td>Défilement lent</td></tr>
-<tr><td>Poing droit + déplacer</td><td>Contraste (horizontal), luminosité (vertical)</td></tr>
-<tr><td>Index droit levé, 1 s</td><td>Contraste d'origine</td></tr>
-<tr><td colspan="2"><b>Mode souris</b></td></tr>
-<tr><td>Main droite</td><td>Pointeur</td></tr>
-<tr><td>Pince droite brève</td><td>Clic gauche (deux rapides = double-clic)</td></tr>
-<tr><td>Pince droite + déplacer</td><td>Glisser</td></tr>
-<tr><td>Pince gauche brève</td><td>Clic droit</td></tr>
-<tr><td>Pince gauche + haut/bas</td><td>Molette</td></tr>
+<tr><td colspan="2"><b>Everywhere</b></td></tr>
+<tr><td>Two closed fists, 1 s</td><td>Pause / resume all commands</td></tr>
+<tr><td>Thumb up, 1 s</td><td>Recenter the controlled view</td></tr>
+<tr><td>V + horizontal swipe</td><td>Next (right) / previous (left) view: 3D, Red, Green, Yellow</td></tr>
+<tr><td colspan="2"><b>3D view</b></td></tr>
+<tr><td>Fist + up/down</td><td>Zoom in / out</td></tr>
+<tr><td>Pinch + move</td><td>Rotate the model</td></tr>
+<tr><td>Index finger + move</td><td>Pan the model</td></tr>
+<tr><td colspan="2"><b>Slice views (Red, Green, Yellow)</b></td></tr>
+<tr><td>Pinch + up/down</td><td>Scroll slices (faster gesture = accelerated)</td></tr>
+<tr><td>Fist + up/down</td><td>Zoom in / out</td></tr>
+<tr><td>Index finger + move</td><td>Pan the slice</td></tr>
 </table>
 """
 
 
-# --------------------------------------------------------------------- réglages
+# --------------------------------------------------------------------- settings
 def getSetting(key):
     default = DEFAULT_SETTINGS[key]
     value = qt.QSettings().value(SETTINGS_PREFIX + key)
@@ -142,13 +130,15 @@ class HandsHover(ScriptedLoadableModule):
         self.parent.title = "HandsHover"
         self.parent.categories = ["IGT"]
         self.parent.dependencies = []
-        self.parent.contributors = ["À compléter (chirurgie digestive)"]
+        self.parent.contributors = [AUTHOR]
         self.parent.helpText = (
-            "Pilote les vues de Slicer sans contact, avec les mains filmées par une webcam "
-            "(suivi MediaPipe). Coupes, contraste, vue 3D et mode souris. "
-            "Outil de recherche, non validé pour un usage clinique.")
+            "Touchless, one-handed control of Slicer views with hand gestures filmed by an ordinary "
+            "webcam (MediaPipe hand tracking): switch views, scroll slices, zoom and pan, "
+            "rotate the 3D view. Camera images are processed locally and never sent anywhere. "
+            "Research tool, not validated for clinical use.<br><br>"
+            f"Created by {AUTHOR}.")
         self.parent.acknowledgementText = (
-            "Suivi des mains : Google MediaPipe (licence Apache 2.0).")
+            "Hand tracking: Google MediaPipe (Apache 2.0 license).")
 
 
 # ======================================================================= widget
@@ -161,46 +151,42 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
         self.logic.stoppedCallback = self.onStopped
         self._cameras = []
 
-        # ---- Contrôle
+        # ---- Control
         box = ctk.ctkCollapsibleButton()
-        box.text = "HandsHover – contrôle gestuel"
+        box.text = "HandsHover"
         self.layout.addWidget(box)
         form = qt.QFormLayout(box)
 
-        self.enableButton = qt.QPushButton("Activer le contrôle gestuel")
+        self.enableButton = qt.QPushButton("Start gesture control")
         self.enableButton.setCheckable(True)
         self.enableButton.setMinimumHeight(44)
         self.enableButton.setStyleSheet("font-weight: bold; font-size: 14px;")
         form.addRow(self.enableButton)
 
         self.cameraCombo = qt.QComboBox()
-        self.refreshButton = qt.QPushButton("Rafraîchir")
-        self.refreshButton.toolTip = "Rechercher les caméras branchées (y compris caméras virtuelles)"
+        self.refreshButton = qt.QPushButton("Refresh")
+        self.refreshButton.toolTip = "Search for connected cameras (including virtual cameras)"
         cameraRow = qt.QHBoxLayout()
         cameraRow.addWidget(self.cameraCombo, 1)
         cameraRow.addWidget(self.refreshButton)
-        form.addRow("Caméra :", cameraRow)
+        form.addRow("Camera:", cameraRow)
 
-        self.invertHandsCheck = qt.QCheckBox("Inverser gauche / droite")
-        self.invertHandsCheck.toolTip = "À cocher si les étiquettes G / D de l'aperçu sont inversées"
-        form.addRow(self.invertHandsCheck)
-
-        self.previewCheck = qt.QCheckBox("Afficher l'image de la caméra")
+        self.previewCheck = qt.QCheckBox("Show camera image")
         form.addRow(self.previewCheck)
 
-        self.previewLabel = qt.QLabel("Aperçu caméra")
+        self.previewLabel = qt.QLabel("Camera preview")
         self.previewLabel.setMinimumSize(320, 180)
         self.previewLabel.setAlignment(qt.Qt.AlignCenter)
         self.previewLabel.setStyleSheet("background-color: #222; color: #999;")
         form.addRow(self.previewLabel)
 
-        self.statusLabel = qt.QLabel("Désactivé.")
+        self.statusLabel = qt.QLabel("Stopped.")
         self.statusLabel.wordWrap = True
-        form.addRow("État :", self.statusLabel)
+        form.addRow("Status:", self.statusLabel)
 
-        # ---- Réglages
+        # ---- Settings
         settingsBox = ctk.ctkCollapsibleButton()
-        settingsBox.text = "Réglages"
+        settingsBox.text = "Settings"
         settingsBox.collapsed = True
         self.layout.addWidget(settingsBox)
         settingsForm = qt.QFormLayout(settingsBox)
@@ -219,32 +205,27 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
             settingsForm.addRow(label, slider)
             self.sliders[key] = slider
 
-        addSlider("scrollStepSlow", "Défilement lent :", 0.5, 6.0, 0.1, 1, " % / coupe",
-                  "Course de la main (en % de la hauteur de l'image) pour avancer d'une coupe. Plus grand = plus fin.")
-        addSlider("scrollStepFast", "Défilement rapide :", 0.1, 2.0, 0.05, 2, " % / coupe",
-                  "Course de la main pour une coupe en défilement rapide.")
-        addSlider("contrastGain", "Contraste :", 0.1, 3.0, 0.1, 1, " ×", "Sensibilité du réglage de contraste / luminosité.")
-        addSlider("rotateGain", "Rotation 3D :", 45, 540, 15, 0, " °",
-                  "Degrés de rotation pour une traversée complète de l'image.")
-        addSlider("zoomGain", "Zoom 3D :", 0.2, 3.0, 0.1, 1, " ×", "Sensibilité du zoom.")
-        addSlider("panGain", "Déplacement 3D :", 0.2, 3.0, 0.1, 1, " ×", "Sensibilité du déplacement du modèle.")
-        addSlider("smoothing", "Lissage :", 0.3, 5.0, 0.1, 1, "",
-                  "Plus petit = plus stable mais plus lent ; plus grand = plus réactif mais plus de tremblement.")
-        addSlider("mouseZoneSize", "Zone souris :", 0.4, 1.4, 0.05, 2, " ×",
-                  "Taille de la zone de la main droite qui couvre toute la fenêtre. Plus petit = moins de mouvement du bras.")
-        addSlider("clickMaxMs", "Durée max d'un clic :", 200, 800, 50, 0, " ms",
-                  "Une pince plus longue que ça (sans bouger) n'est pas un clic.")
+        addSlider("scrollStep", "Scrolling:", 0.5, 6.0, 0.1, 1, " % / slice",
+                  "Hand travel (in % of the image height) to move by one slice with a slow gesture. Larger = finer.")
+        addSlider("scrollAccel", "Acceleration:", 1.0, 8.0, 0.5, 1, " x",
+                  "Maximum scrolling multiplier for a fast gesture (1 = no acceleration).")
+        addSlider("swipeDistance", "V swipe:", 5.0, 35.0, 1.0, 0, " %",
+                  "Horizontal distance (in % of the image width) to change view. Larger = fewer accidental changes.")
+        addSlider("rotateGain", "3D rotation:", 45, 540, 15, 0, " deg",
+                  "Rotation in degrees for a full traversal of the image.")
+        addSlider("zoomGain", "Zoom:", 0.2, 3.0, 0.1, 1, " x", "Zoom sensitivity.")
+        addSlider("panGain", "Pan:", 0.2, 3.0, 0.1, 1, " x", "Pan sensitivity (3D and slice views).")
+        addSlider("smoothing", "Smoothing:", 0.3, 5.0, 0.1, 1, "",
+                  "Smaller = steadier but slower; larger = more responsive but more jitter.")
 
-        self.invertScrollCheck = qt.QCheckBox("Inverser le sens du défilement")
+        self.invertScrollCheck = qt.QCheckBox("Invert scrolling direction")
         settingsForm.addRow(self.invertScrollCheck)
-        self.resetSettingsButton = qt.QPushButton("Valeurs par défaut")
+        self.resetSettingsButton = qt.QPushButton("Restore defaults")
         settingsForm.addRow(self.resetSettingsButton)
-        self.selfTestButton = qt.QPushButton("Tester le moteur de gestes (sans caméra)")
-        settingsForm.addRow(self.selfTestButton)
 
-        # ---- Aide
+        # ---- Help
         helpBox = ctk.ctkCollapsibleButton()
-        helpBox.text = "Gestes"
+        helpBox.text = "Gestures"
         helpBox.collapsed = True
         self.layout.addWidget(helpBox)
         helpLayout = qt.QVBoxLayout(helpBox)
@@ -255,8 +236,7 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
 
         self.layout.addStretch(1)
 
-        # ---- État initial et connexions
-        self.invertHandsCheck.checked = getSetting("invertHands")
+        # ---- Initial state and connections
         self.invertScrollCheck.checked = getSetting("invertScroll")
         self.previewCheck.checked = getSetting("preview")
         savedName = getSetting("cameraName")
@@ -264,22 +244,20 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
             self._cameras = [{"index": getSetting("cameraIndex"), "backend": getSetting("cameraBackend"), "name": savedName}]
             self.cameraCombo.addItem(savedName)
         else:
-            self.cameraCombo.addItem("(cliquer sur Rafraîchir)")
+            self.cameraCombo.addItem("(click Refresh)")
 
         self.enableButton.connect("toggled(bool)", self.onEnableToggled)
         self.refreshButton.connect("clicked()", self.onRefreshCameras)
         self.cameraCombo.connect("currentIndexChanged(int)", self.onCameraChanged)
-        self.invertHandsCheck.connect("toggled(bool)", lambda v: self.onSettingChanged("invertHands", v))
         self.invertScrollCheck.connect("toggled(bool)", lambda v: self.onSettingChanged("invertScroll", v))
         self.previewCheck.connect("toggled(bool)", self.onPreviewToggled)
         self.resetSettingsButton.connect("clicked()", self.onResetSettings)
-        self.selfTestButton.connect("clicked()", self.onSelfTest)
 
     def cleanup(self):
         if hasattr(self, "logic") and self.logic:
             self.logic.shutdown()
 
-    # ------------------------------------------------------------ réglages
+    # ------------------------------------------------------------ settings
     def currentSettings(self):
         return {key: getSetting(key) for key in DEFAULT_SETTINGS}
 
@@ -297,9 +275,9 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
         self.logic.setPreview(checked)
         if not checked:
             self.previewLabel.clear()
-            self.previewLabel.setText("Aperçu désactivé")
+            self.previewLabel.setText("Preview off")
 
-    # ------------------------------------------------------------- caméras
+    # ------------------------------------------------------------- cameras
     def onRefreshCameras(self):
         if not self.logic.ensureDependencies():
             return
@@ -308,12 +286,12 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
             cameras = self.logic.listCameras()
         except Exception as e:
             qt.QApplication.restoreOverrideCursor()
-            slicer.util.errorDisplay(f"Impossible de lister les caméras :\n{e}")
+            slicer.util.errorDisplay(f"Cannot list cameras:\n{e}")
             return
         qt.QApplication.restoreOverrideCursor()
         self._setCameraList(cameras)
         if not cameras:
-            slicer.util.warningDisplay("Aucune caméra trouvée. Vérifiez qu'elle est branchée et non utilisée par un autre logiciel.")
+            slicer.util.warningDisplay("No camera found. Check that it is connected and not used by another application.")
 
     def _setCameraList(self, cameras):
         savedName = getSetting("cameraName")
@@ -327,7 +305,7 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
             if cam["name"] == savedName and (cam["index"] == savedIndex or selected == 0):
                 selected = i
         if not self._cameras:
-            self.cameraCombo.addItem("(aucune caméra)")
+            self.cameraCombo.addItem("(no camera)")
         self.cameraCombo.setCurrentIndex(selected)
         self.cameraCombo.blockSignals(False)
         self.onCameraChanged(selected)
@@ -346,23 +324,23 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
         setSetting("cameraIndex", cam["index"])
         setSetting("cameraBackend", cam.get("backend", -1))
         if self.logic.running:
-            # Redémarre sur la nouvelle caméra
+            # Restart on the new camera
             self._uncheckEnable()
             self.logic.stop()
             self.enableButton.setChecked(True)
 
-    # ---------------------------------------------------------- activation
+    # ---------------------------------------------------------- start/stop
     def _uncheckEnable(self):
         self.enableButton.blockSignals(True)
         self.enableButton.setChecked(False)
         self.enableButton.blockSignals(False)
-        self.enableButton.setText("Activer le contrôle gestuel")
+        self.enableButton.setText("Start gesture control")
 
     def onEnableToggled(self, checked):
         if not checked:
             self.logic.stop()
-            self.enableButton.setText("Activer le contrôle gestuel")
-            self.statusLabel.setText("Désactivé.")
+            self.enableButton.setText("Start gesture control")
+            self.statusLabel.setText("Stopped.")
             return
         try:
             if not self.logic.ensureDependencies():
@@ -379,28 +357,28 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
                     qt.QApplication.restoreOverrideCursor()
             camera = self.currentCamera()
             if camera is None:
-                slicer.util.errorDisplay("Aucune caméra disponible.")
+                slicer.util.errorDisplay("No camera available.")
                 self._uncheckEnable()
                 return
             self.logic.applySettings(self.currentSettings())
             self.logic.start(camera, preview=self.previewCheck.checked)
-            self.enableButton.setText("Désactiver le contrôle gestuel")
-            self.statusLabel.setText(f"Démarrage sur « {camera['name']} »…")
+            self.enableButton.setText("Stop gesture control")
+            self.statusLabel.setText(f"Starting on \"{camera['name']}\"...")
         except Exception as e:
-            logging.exception("HandsHover : démarrage impossible")
+            logging.exception("HandsHover: cannot start")
             self._uncheckEnable()
-            slicer.util.errorDisplay(f"Démarrage impossible :\n{e}")
+            slicer.util.errorDisplay(f"Cannot start:\n{e}")
 
     def _askForModel(self):
         box = qt.QMessageBox(slicer.util.mainWindow())
-        box.setWindowTitle("Modèle de suivi des mains")
-        box.setText("Le modèle de suivi des mains (hand_landmarker.task, environ 8 Mo) est introuvable.")
+        box.setWindowTitle("Hand-tracking model")
+        box.setText("The hand-tracking model (hand_landmarker.task, about 8 MB) was not found.")
         box.setInformativeText(
-            "Vous pouvez le télécharger depuis le site de Google (MediaPipe), "
-            "ou choisir un fichier hand_landmarker.task déjà présent sur ce PC.")
-        box.addButton("Télécharger", qt.QMessageBox.AcceptRole)
-        box.addButton("Choisir le fichier…", qt.QMessageBox.ActionRole)
-        box.addButton("Annuler", qt.QMessageBox.RejectRole)
+            "You can download it from Google (MediaPipe), "
+            "or select a hand_landmarker.task file already on this computer.")
+        box.addButton("Download", qt.QMessageBox.AcceptRole)
+        box.addButton("Select file...", qt.QMessageBox.ActionRole)
+        box.addButton("Cancel", qt.QMessageBox.RejectRole)
         box.exec_()
         role = box.buttonRole(box.clickedButton())
         if role == qt.QMessageBox.AcceptRole:
@@ -409,13 +387,13 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
                 self.logic.downloadModel()
             except Exception as e:
                 qt.QApplication.restoreOverrideCursor()
-                slicer.util.errorDisplay(f"Téléchargement impossible :\n{e}")
+                slicer.util.errorDisplay(f"Download failed:\n{e}")
                 return False
             qt.QApplication.restoreOverrideCursor()
             return True
         if role == qt.QMessageBox.ActionRole:
             path = qt.QFileDialog.getOpenFileName(
-                slicer.util.mainWindow(), "Choisir hand_landmarker.task", "", "Modèle MediaPipe (*.task)")
+                slicer.util.mainWindow(), "Select hand_landmarker.task", "", "MediaPipe model (*.task)")
             if path:
                 setSetting("modelPath", path)
                 return True
@@ -434,31 +412,20 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
 
     def onStopped(self, error):
         self._uncheckEnable()
-        self.statusLabel.setText("Arrêté." if not error else f"Arrêté : {error}")
+        self.statusLabel.setText("Stopped." if not error else f"Stopped: {error}")
         if error:
-            slicer.util.errorDisplay(f"Le suivi des mains s'est arrêté :\n{error}")
-
-    def onSelfTest(self):
-        from HandsHoverLib.selftests import run_all
-        lines = []
-        failures = run_all(log=lines.append)
-        text = "\n".join(lines)
-        if failures:
-            slicer.util.errorDisplay("Des tests ont échoué :\n\n" + text)
-        else:
-            slicer.util.infoDisplay("Tous les tests du moteur de gestes sont passés.\n\n" + text)
+            slicer.util.errorDisplay(f"Hand tracking stopped:\n{error}")
 
 
 # ======================================================================== logic
 class HandsHoverLogic(ScriptedLoadableModuleLogic):
-    """Lance le processus de suivi, reçoit les mains, fait tourner le moteur de gestes
-    et exécute les actions dans Slicer."""
+    """Starts the tracking process, receives the hands, runs the gesture engine
+    and executes the actions in Slicer."""
 
     def __init__(self):
         ScriptedLoadableModuleLogic.__init__(self)
         self.pipeline = GesturePipeline()
         self.actions = SlicerActions()
-        self.mouse = None
         self.banner = None
         self.highlighter = None
         self.process = None
@@ -482,7 +449,7 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
         self.watchdog.setInterval(1000)
         self.watchdog.connect("timeout()", self._onWatchdog)
 
-    # ------------------------------------------------------------ chemins
+    # -------------------------------------------------------------- paths
     @staticmethod
     def pythonSlicerExecutable():
         exe = shutil.which("PythonSlicer")
@@ -526,7 +493,7 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
                 pass
         return dict(os.environ)
 
-    # --------------------------------------------------------- dépendances
+    # -------------------------------------------------------- dependencies
     def missingDependencies(self):
         missing = []
         if not _distributionInstalled("mediapipe"):
@@ -542,44 +509,44 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
             return True
         toInstall = missing + ([CAMERA_LIST_DISTRIBUTION] if needCameraNames else [])
         if not slicer.util.confirmOkCancelDisplay(
-                "Le contrôle gestuel a besoin de bibliothèques Python qui ne sont pas encore installées :\n\n"
+                "HandsHover needs Python packages that are not installed yet:\n\n"
                 f"  {', '.join(toInstall)}\n\n"
-                "Les installer maintenant ? (connexion internet nécessaire, quelques minutes ; "
-                "Slicer peut demander à redémarrer.)",
+                "Install them now? (internet connection required, a few minutes; "
+                "Slicer may ask to restart.)",
                 windowTitle="HandsHover"):
             self._skipCameraNames = True
-            return not missing   # sans les noms de caméras, on peut quand même fonctionner
+            return not missing   # works without camera names
         numpyBefore = _distributionVersion("numpy")
         try:
             for requirement in missing:
                 slicer.util.pip_install(requirement)
-                # mediapipe peut installer OpenCV lui-même : on revérifie avant d'en ajouter un
+                # MediaPipe may install OpenCV itself: check again before adding one
                 if requirement == MEDIAPIPE_REQUIREMENT and any(_distributionInstalled(d) for d in OPENCV_DISTRIBUTIONS):
                     break
             if any(r == OPENCV_REQUIREMENT for r in self.missingDependencies()):
                 slicer.util.pip_install(OPENCV_REQUIREMENT)
         except Exception as e:
-            slicer.util.errorDisplay(f"L'installation a échoué :\n{e}")
+            slicer.util.errorDisplay(f"Installation failed:\n{e}")
             return False
         if needCameraNames:
             try:
-                # Sans dépendances, pour ne pas installer une seconde variante d'OpenCV
+                # Without dependencies, so that a second OpenCV variant is not installed
                 slicer.util.pip_install(f"--no-deps {CAMERA_LIST_DISTRIBUTION}")
             except Exception:
-                logging.warning("HandsHover : noms des caméras indisponibles (cv2_enumerate_cameras).")
+                logging.warning("HandsHover: camera names unavailable (cv2_enumerate_cameras).")
         importlib.invalidate_caches()
         numpyAfter = _distributionVersion("numpy")
         if numpyBefore and numpyAfter and numpyBefore.split(".")[0] != numpyAfter.split(".")[0]:
             slicer.util.warningDisplay(
-                f"Attention : l'installation a changé la version de numpy ({numpyBefore} → {numpyAfter}). "
-                "Redémarrez Slicer ; en cas de problème, réinstallez Slicer.")
+                f"Warning: the installation changed the numpy version ({numpyBefore} -> {numpyAfter}). "
+                "Restart Slicer; if problems occur, reinstall Slicer.")
         return not self.missingDependencies()
 
-    # ------------------------------------------------------------- caméras
+    # ------------------------------------------------------------- cameras
     def listCameras(self):
         exe = self.pythonSlicerExecutable()
         if not exe:
-            raise RuntimeError("PythonSlicer introuvable.")
+            raise RuntimeError("PythonSlicer not found.")
         kwargs = {}
         if sys.platform.startswith("win"):
             kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
@@ -594,46 +561,36 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
                 return msg["cameras"]
             if msg.get("type") == "error":
                 raise RuntimeError(msg.get("message"))
-        raise RuntimeError((proc.stderr or "réponse vide")[-800:])
+        raise RuntimeError((proc.stderr or "empty response")[-800:])
 
-    # -------------------------------------------------------------- réglages
+    # ------------------------------------------------------------ settings
     def applySettings(self, s):
         e = self.pipeline.engine.cfg
-        e.scroll_step_slow = s["scrollStepSlow"] / 100.0
-        e.scroll_step_fast = s["scrollStepFast"] / 100.0
+        e.scroll_step = s["scrollStep"] / 100.0
+        e.scroll_accel_max = s["scrollAccel"]
+        e.swipe_distance = s["swipeDistance"] / 100.0
         e.invert_scroll = bool(s["invertScroll"])
         e.rotate_gain_deg = s["rotateGain"]
-        e.zoom_gain_fast = 4.0 * s["zoomGain"]
-        e.zoom_gain_fine = 1.5 * s["zoomGain"]
+        e.zoom_gain = 3.0 * s["zoomGain"]
+        e.slice_zoom_gain = 3.0 * s["zoomGain"]
         e.pan_gain = s["panGain"]
-        e.click_max_s = s["clickMaxMs"] / 1000.0
-        x0, y0, x1, y1 = BASE_MOUSE_ZONE
-        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-        k = s["mouseZoneSize"]
-        hw, hh = (x1 - x0) / 2.0 * k, (y1 - y0) / 2.0 * k
-        e.mouse_zone = (max(0.0, cx - hw), max(0.0, cy - hh), min(1.0, cx + hw), min(1.0, cy + hh))
-        self.pipeline.invert_hands = bool(s["invertHands"])
         self.pipeline.set_filter(min_cutoff=s["smoothing"])
-        self.actions.wl_gain = s["contrastGain"]
 
-    # ------------------------------------------------------- démarrage/arrêt
+    # ---------------------------------------------------------- start/stop
     def start(self, camera, preview=True):
         if self.running:
             self.stop()
         model = self.findModel()
         if not model:
-            raise RuntimeError("Modèle hand_landmarker.task introuvable.")
+            raise RuntimeError("Model hand_landmarker.task not found.")
         exe = self.pythonSlicerExecutable()
         if not exe:
-            raise RuntimeError("PythonSlicer introuvable.")
+            raise RuntimeError("PythonSlicer not found.")
 
         if self.banner is None:
             from HandsHoverLib.overlay import ModeBanner, ViewHighlighter
             self.banner = ModeBanner()
             self.highlighter = ViewHighlighter()
-        if self.mouse is None:
-            from HandsHoverLib.mouse import MouseController
-            self.mouse = MouseController()
 
         args = [TRACKER_SCRIPT, "--model", model,
                 "--camera", str(int(camera["index"])), "--backend", str(int(camera.get("backend", -1)))]
@@ -657,7 +614,7 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
         self.process.start(exe, args)
         if not self.process.waitForStarted(10000):
             self.process = None
-            raise RuntimeError("Le processus de suivi n'a pas démarré.")
+            raise RuntimeError("The hand-tracking process did not start.")
 
         self.running = True
         for event in self.pipeline.reset():
@@ -669,23 +626,21 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
         self.watchdog.stop()
         for event in self.pipeline.engine.release():
             self._dispatch(event)
-        if self.mouse:
-            self.mouse.releaseAll()
         process = self.process
         self.process = None
         self._stopping = True
         if process is not None:
             try:
-                process.closeWriteChannel()   # le processus de suivi s'arrête de lui-même
+                process.closeWriteChannel()   # the tracking process then stops by itself
                 if not process.waitForFinished(3000):
                     process.kill()
                     process.waitForFinished(1000)
             except Exception:
-                logging.exception("HandsHover : arrêt du processus de suivi")
+                logging.exception("HandsHover: stopping the tracking process")
         self.running = False
         self.currentAction = None
         if self.banner:
-            self.banner.setOff("HANDSHOVER : ERREUR" if error else "HANDSHOVER DÉSACTIVÉ")
+            self.banner.setOff("HANDSHOVER: ERROR" if error else "HANDSHOVER OFF")
         if self.highlighter:
             self.highlighter.hide()
 
@@ -708,9 +663,9 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
             try:
                 self.process.write(qt.QByteArray(command))
             except Exception:
-                logging.warning("HandsHover : impossible de changer l'aperçu sans redémarrer.")
+                logging.warning("HandsHover: cannot change the preview without restarting.")
 
-    # ------------------------------------------------------- messages reçus
+    # ---------------------------------------------------- incoming messages
     def _onStdout(self):
         if self.process is None:
             return
@@ -734,11 +689,11 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
                 lastPreview = msg
             elif kind == "error":
                 self._lastError = msg.get("message")
-                self._status(f"Erreur : {self._lastError}")
+                self._status(f"Error: {self._lastError}")
             elif kind == "status":
                 self._status(msg.get("message", ""))
             elif kind == "ready":
-                self._status(f"Caméra prête ({msg.get('width')}×{msg.get('height')}). Gestes actifs.")
+                self._status(f"Camera ready ({msg.get('width')}x{msg.get('height')}). Gestures active.")
         if lastFrame is not None:
             self._handleFrame(lastFrame)
         if lastPreview is not None and self.previewCallback:
@@ -751,13 +706,13 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
         for line in text.splitlines():
             if line.strip():
                 self._stderrTail.append(line)
-                logging.debug("Suivi des mains : %s", line)
+                logging.debug("HandsHover tracking: %s", line)
         self._stderrTail = self._stderrTail[-20:]
 
     def _onFinished(self, exitCode, exitStatus=None):
         if self._stopping or not self.running:
             return
-        error = self._lastError or ("\n".join(self._stderrTail[-6:]) or f"code de sortie {exitCode}")
+        error = self._lastError or ("\n".join(self._stderrTail[-6:]) or f"exit code {exitCode}")
         self.stop(error=error)
         if self.stoppedCallback:
             self.stoppedCallback(error)
@@ -766,13 +721,13 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
         if not self.running or self._lastFrameWall is None:
             return
         if time.monotonic() - self._lastFrameWall > 3.0:
-            self._status("Aucune image de la caméra depuis plus de 3 secondes…")
+            self._status("No camera image for more than 3 seconds...")
 
     def _status(self, text):
         if self.statusCallback:
             self.statusCallback(text)
 
-    # ------------------------------------------------------------ traitement
+    # ------------------------------------------------------------ processing
     def _handleFrame(self, msg):
         self._lastFrameWall = time.monotonic()
         self.fps = msg.get("fps", 0.0)
@@ -788,8 +743,6 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
     def _dispatch(self, event):
         kind = event[0]
         if kind == "mode":
-            if event[1] != self.mode and self.mouse:
-                self.mouse.releaseAll()
             self.mode, self.paused = event[1], event[2]
             self._updateModeDisplay()
         elif kind == "action":
@@ -798,9 +751,6 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
         elif kind == "progress":
             if self.banner:
                 self.banner.setProgress(event[1], event[2])
-        elif kind in ("pointer", "mouse_button", "mouse_click", "wheel"):
-            if self.mouse:
-                self.mouse.execute(event)
         else:
             self.actions.execute(event)
 
@@ -809,7 +759,7 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
             return
         self.banner.setMode(self.mode, self.paused, self.currentAction)
         from HandsHoverLib.overlay import MODE_COLORS
-        if self.paused or self.mode == MOUSE:
+        if self.paused:
             self.highlighter.hide()
         else:
             self.highlighter.show(self.mode, MODE_COLORS.get(self.mode, "#ffffff"))
@@ -829,8 +779,7 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
                 continue
         if not loaded:
             return
-        zone = self.pipeline.engine.cfg.mouse_zone if self.mode == MOUSE else None
-        drawHandsOnPixmap(pixmap, self.lastAssigned, self.lastInfo, zone)
+        drawHandsOnPixmap(pixmap, self.lastAssigned, self.lastInfo)
         self.previewCallback(pixmap)
 
 
@@ -846,13 +795,13 @@ class HandsHoverTest(ScriptedLoadableModuleTest):
         self.test_SlicerActions()
 
     def test_GestureEngine(self):
-        self.delayDisplay("Moteur de gestes sur mains synthétiques")
+        self.delayDisplay("Gesture engine on synthetic hands")
         from HandsHoverLib.selftests import run_all
         failures = run_all(log=logging.info)
         self.assertEqual(failures, [])
 
     def test_SlicerActions(self):
-        self.delayDisplay("Actions sur les vues Slicer")
+        self.delayDisplay("Actions on Slicer views")
         import numpy as np
         array = (np.arange(40 * 64 * 64, dtype=np.int16).reshape(40, 64, 64) % 1000)
         volume = slicer.util.addVolumeFromArray(array, name="HandsHoverTestVolume")
@@ -868,11 +817,19 @@ class HandsHoverTest(ScriptedLoadableModuleTest):
         window0 = display.GetWindow()
         actions.windowLevel("Red", 0.1, 0.0)
         self.assertGreater(display.GetWindow(), window0)
-        actions.resetWindowLevel("Red")
-        self.assertAlmostEqual(display.GetWindow(), window0, places=1)
+
+        sliceNode = sliceLogic.GetSliceNode()
+        fov0 = sliceNode.GetFieldOfView()[0]
+        actions.sliceZoom("Red", 2.0)
+        self.assertAlmostEqual(sliceNode.GetFieldOfView()[0], fov0 / 2.0, places=3)
+        origin0 = sliceNode.GetSliceToRAS().GetElement(0, 3)
+        actions.slicePan("Red", 0.1, 0.0)
+        self.assertNotAlmostEqual(sliceNode.GetSliceToRAS().GetElement(0, 3), origin0)
+        actions.sliceFit("Red")
+        self.assertAlmostEqual(sliceNode.GetFieldOfView()[0], fov0, delta=fov0 * 0.05)
 
         actions.rotate(10.0, 5.0)
         actions.zoom(1.2)
         actions.pan(0.05, 0.0)
         actions.recenter()
-        self.delayDisplay("Test réussi")
+        self.delayDisplay("Test passed")

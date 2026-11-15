@@ -1,6 +1,6 @@
-"""Bibliothèque du module HandsHover (contrôle gestuel).
+"""Library of the HandsHover module (touchless gesture control for 3D Slicer).
 
-Modules en Python pur (testables sans Slicer) : filters, hands, gestures, synthetic, selftests.
-Modules liés à Slicer : actions, mouse, overlay.
-Script du processus de suivi (lancé avec PythonSlicer) : tracker_process.
+Pure-Python modules (testable without Slicer): filters, hands, gestures, synthetic, selftests.
+Slicer-dependent modules: actions, overlay.
+Hand-tracking process script (run with PythonSlicer): tracker_process.
 """

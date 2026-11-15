@@ -1,4 +1,4 @@
-"""Lance les tests du moteur de gestes sans Slicer :  python Tests/run_tests.py"""
+"""Runs the gesture engine tests without Slicer:  python Tests/run_tests.py"""
 
 import os
 import sys
@@ -11,5 +11,5 @@ from HandsHoverLib.selftests import run_all  # noqa: E402
 if __name__ == "__main__":
     failures = run_all()
     print()
-    print("Tous les tests sont passés." if not failures else f"{len(failures)} test(s) en échec.")
+    print("All tests passed." if not failures else f"{len(failures)} test(s) failed.")
     sys.exit(1 if failures else 0)

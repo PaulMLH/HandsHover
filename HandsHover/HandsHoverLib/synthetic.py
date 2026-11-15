@@ -1,7 +1,8 @@
-"""Mains synthétiques (21 points) pour tester le moteur sans caméra.
+"""Synthetic hands (21 landmarks) to test the gesture engine without a camera.
 
-Modèle simple : paume dans le plan XY, doigts vers +Y, la flexion plie les doigts
-vers +Z (côté paume, face caméra). Unités : mètres (comme les points « monde » MediaPipe).
+Simple model: palm in the XY plane, fingers towards +Y (up in the image), flexion bends
+the fingers towards +Z (palm side, facing the camera). Units: meters (like MediaPipe
+world landmarks).
 """
 
 import math
@@ -32,6 +33,7 @@ POSE_FLEXION = {
     "index": {"index": EXT, "middle": FOLD, "ring": FOLD, "pinky": FOLD},
     "v": {"index": EXT, "middle": EXT, "ring": FOLD, "pinky": FOLD},
     "pinch": {"index": OK_CURL, "middle": EXT, "ring": EXT, "pinky": EXT},
+    "thumb_up": {f: FOLD for f in ORDER},
 }
 
 
@@ -60,7 +62,7 @@ def _finger(mcp, lengths, flex_deg):
 
 
 def _thumb_towards(tip):
-    """Pouce du CMC jusqu'à `tip`, articulations intermédiaires interpolées."""
+    """Thumb from the CMC joint to `tip`, intermediate joints interpolated."""
     cmc = THUMB_CMC
     mcp = _lerp(cmc, tip, 0.40)
     ip = _lerp(cmc, tip, 0.72)
@@ -72,9 +74,11 @@ def local_hand(pose):
     fingers = {f: _finger(MCP[f], LENGTHS[f], flex[f]) for f in ORDER}
     if pose == "open":
         tip = _add(THUMB_CMC, _scale((0.8, 0.6, 0.0), sum(THUMB_LENGTHS)))
+    elif pose == "thumb_up":
+        tip = _add(THUMB_CMC, _scale((0.45, 0.88, 0.15), sum(THUMB_LENGTHS)))
     elif pose == "pinch":
         tip = _add(fingers["index"][3], (0.006, 0.0, 0.0))
-    else:  # pouce replié sur les doigts
+    else:  # thumb folded over the fingers
         tip = (0.0, 0.055, 0.040)
     thumb = _thumb_towards(tip)
     pts = [(0.0, 0.0, 0.0)] + thumb
@@ -85,23 +89,23 @@ def local_hand(pose):
 
 def _rotate(p, roll=0.0, yaw=0.0, pitch=0.0):
     x, y, z = p
-    # roll : autour de Z (dans le plan de l'image)
+    # roll: around Z (in the image plane)
     c, s = math.cos(math.radians(roll)), math.sin(math.radians(roll))
     x, y = c * x - s * y, s * x + c * y
-    # yaw : autour de Y
+    # yaw: around Y
     c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
     x, z = c * x + s * z, -s * x + c * z
-    # pitch : autour de X
+    # pitch: around X
     c, s = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
     y, z = c * y - s * z, s * y + c * z
     return (x, y, z)
 
 
 def make_hand(pose, cx=0.5, cy=0.5, roll=0.0, yaw=0.0, pitch=0.0, scale=2.5, score=0.95):
-    """Main brute au format du processus de suivi : {"lm", "wlm", "score"}.
-    (cx, cy) = position approximative du centre de la paume dans l'image (0..1)."""
+    """Raw hand in the tracking-process format: {"lm", "wlm", "score"}.
+    (cx, cy) = approximate palm-center position in the image (0..1)."""
     local = [_rotate(p, roll, yaw, pitch) for p in local_hand(pose)]
-    # recentrer pour que le centre de la paume tombe sur (cx, cy)
+    # shift so that the palm center lands on (cx, cy)
     palm = [local[i] for i in (0, 5, 9, 13, 17)]
     px = sum(p[0] for p in palm) / 5.0
     py = sum(p[1] for p in palm) / 5.0

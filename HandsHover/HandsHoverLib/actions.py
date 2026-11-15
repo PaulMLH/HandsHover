@@ -1,5 +1,5 @@
-"""Exécution des commandes de gestes dans Slicer, directement via MRML / VTK
-(aucune émulation clavier ou souris pour les vues)."""
+"""Executes gesture commands in Slicer, directly through MRML / VTK
+(no keyboard or mouse emulation)."""
 
 import logging
 import math
@@ -19,9 +19,9 @@ def _cross(a, b):
 class SlicerActions:
     def __init__(self):
         self.wl_gain = 1.0
-        self._wl_original = {}   # id du nœud d'affichage -> (fenêtre, niveau, auto)
+        self._wl_original = {}   # display node ID -> (window, level, auto)
 
-    # ------------------------------------------------------------ outils
+    # ------------------------------------------------------------ helpers
     @staticmethod
     def layoutManager():
         return slicer.app.layoutManager()
@@ -73,6 +73,12 @@ class SlicerActions:
                 self.scroll(event[1], event[2])
             elif kind == "wl":
                 self.windowLevel(event[1], event[2], event[3])
+            elif kind == "slice_pan":
+                self.slicePan(event[1], event[2], event[3])
+            elif kind == "slice_fit":
+                self.sliceFit(event[1])
+            elif kind == "slice_zoom":
+                self.sliceZoom(event[1], event[2])
             elif kind == "wl_reset":
                 self.resetWindowLevel(event[1])
             elif kind == "rotate":
@@ -84,7 +90,7 @@ class SlicerActions:
             elif kind == "recenter":
                 self.recenter()
         except Exception:
-            logging.exception("HandsHover : échec de l'action %s", kind)
+            logging.exception("HandsHover: action %s failed", kind)
 
     # ------------------------------------------------------------- 2D
     def scroll(self, view, n_slices):
@@ -103,6 +109,35 @@ class SlicerActions:
             logic.SnapSliceOffsetToIJK()
         except Exception:
             pass
+
+    def slicePan(self, view, dx, dy):
+        """Pans a slice view in its plane. Hand to the right = image to the right."""
+        logic = self.sliceLogic(view)
+        if logic is None:
+            return
+        node = logic.GetSliceNode()
+        fov = node.GetFieldOfView()
+        sliceToRAS = node.GetSliceToRAS()
+        for i in range(3):
+            # column 0 = slice x axis (to the right), column 1 = slice y axis (up)
+            shift = -dx * fov[0] * sliceToRAS.GetElement(i, 0) + dy * fov[1] * sliceToRAS.GetElement(i, 1)
+            sliceToRAS.SetElement(i, 3, sliceToRAS.GetElement(i, 3) + shift)
+        node.UpdateMatrices()
+
+    def sliceFit(self, view):
+        """Recenters a slice view: fits the displayed volume to the view."""
+        logic = self.sliceLogic(view)
+        if logic is not None:
+            logic.FitSliceToAll()
+
+    def sliceZoom(self, view, factor):
+        """factor > 1 = zoom in (the slice field of view shrinks)."""
+        logic = self.sliceLogic(view)
+        if logic is None or factor <= 0:
+            return
+        node = logic.GetSliceNode()
+        fov = node.GetFieldOfView()
+        node.SetFieldOfView(fov[0] / factor, fov[1] / factor, fov[2])
 
     def _backgroundDisplay(self, view):
         logic = self.sliceLogic(view)
@@ -125,8 +160,8 @@ class SlicerActions:
         image = volume.GetImageData()
         lo, hi = image.GetScalarRange() if image else (0.0, 1000.0)
         span = max(hi - lo, 1.0) * self.wl_gain
-        # Comme la souris dans Slicer : horizontal = largeur de fenêtre, vertical = niveau.
-        # Main vers le haut (dy < 0) = niveau plus bas = image plus claire.
+        # Like the mouse in Slicer: horizontal = window width, vertical = level.
+        # Hand moving up (dy < 0) = lower level = brighter image.
         window = max(1.0, display.GetWindow() + dx * span)
         level = display.GetLevel() + dy * span
         display.SetAutoWindowLevel(False)
@@ -161,7 +196,7 @@ class SlicerActions:
         view, cameraNode, camera = self._camera()
         if camera is None:
             return
-        # Saut limité par image : un geste mal suivi ne fait pas tourner le modèle d'un coup
+        # Limited jump per frame: a badly tracked gesture cannot spin the model at once
         camera.Azimuth(max(-30.0, min(30.0, d_azimuth)))
         camera.Elevation(max(-30.0, min(30.0, d_elevation)))
         self._render3D(view, cameraNode, camera)
@@ -180,7 +215,7 @@ class SlicerActions:
         else:
             distance = camera.GetDistance()
             height = 2.0 * distance * math.tan(math.radians(camera.GetViewAngle() / 2.0))
-        # Main vers la droite = modèle vers la droite (la caméra part à gauche)
+        # Hand to the right = model to the right (the camera moves to the left)
         shift = [(-dx * right[i] + dy * up[i]) * height for i in range(3)]
         camera.SetPosition([position[i] + shift[i] for i in range(3)])
         camera.SetFocalPoint([focal[i] + shift[i] for i in range(3)])

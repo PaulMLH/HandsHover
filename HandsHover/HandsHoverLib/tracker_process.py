@@ -1,19 +1,19 @@
-"""Processus de suivi des mains, lancé par le module avec PythonSlicer.
+"""Hand-tracking process, started by the module with PythonSlicer.
 
-Il tourne à part de Slicer : la caméra et MediaPipe ne ralentissent pas l'interface,
-OpenCV n'est jamais chargé dans Slicer, et si Slicer se ferme ou plante, l'entrée
-standard se ferme et ce processus s'arrête en libérant la caméra.
+It runs outside Slicer: the camera and MediaPipe do not slow down the user interface,
+OpenCV is never loaded into Slicer, and if Slicer closes or crashes, standard input
+closes and this process stops, releasing the camera.
 
-Sortie : une ligne JSON par message sur la sortie standard.
+Output: one JSON line per message on standard output.
     {"type": "status", "message": ...}
     {"type": "ready", "width": w, "height": h}
     {"type": "frame", "t": secondes, "fps": f, "hands": [{"lm": [[x,y,z]x21], "wlm": [...], "label": "Left", "score": 0.98}]}
     {"type": "preview", "jpg": base64}
     {"type": "cameras", "cameras": [{"index": i, "backend": b, "name": "..."}]}
     {"type": "error", "message": ...}
-Entrée : commandes texte, une par ligne : "preview 1", "preview 0", "quit".
+Input: text commands, one per line: "preview 1", "preview 0", "quit".
 
-L'image est retournée horizontalement (vue « miroir ») avant l'analyse.
+The image is flipped horizontally (mirror view) before analysis.
 """
 
 import argparse
@@ -34,7 +34,7 @@ def emit(obj):
 
 
 def _default_backend(cv2):
-    # Sous Windows, DirectShow liste aussi les caméras virtuelles (NVIDIA Broadcast, OBS…)
+    # On Windows, DirectShow also lists virtual cameras (NVIDIA Broadcast, OBS...)
     if sys.platform.startswith("win"):
         return cv2.CAP_DSHOW
     return cv2.CAP_ANY
@@ -51,13 +51,13 @@ def list_cameras():
     except Exception:
         cameras = []
     if not cameras:
-        # Repli : on teste les 6 premiers numéros (sans nom)
+        # Fallback: probe the first 6 indices (no names)
         for i in range(6):
             cap = cv2.VideoCapture(i, backend)
             if cap is not None and cap.isOpened():
                 ok, _ = cap.read()
                 if ok:
-                    cameras.append({"index": i, "backend": int(backend), "name": f"Caméra {i}"})
+                    cameras.append({"index": i, "backend": int(backend), "name": f"Camera {i}"})
             if cap is not None:
                 cap.release()
     emit({"type": "cameras", "cameras": cameras})
@@ -79,7 +79,7 @@ class Commands:
                     self.preview = cmd.endswith("1")
         except Exception:
             pass
-        # Entrée fermée (Slicer arrêté ou « quit ») : on s'arrête
+        # Input closed (Slicer stopped or "quit"): stop
         self.running = False
 
 
@@ -88,11 +88,11 @@ def _round_points(points, nd=4):
 
 
 def track(args):
-    emit({"type": "status", "message": "Chargement de MediaPipe…"})
+    emit({"type": "status", "message": "Loading MediaPipe..."})
     import cv2
     import mediapipe as mp
 
-    # Modèle d'abord : en cas d'erreur, la caméra n'est même pas ouverte
+    # Model first: on error, the camera is not even opened
     vision = mp.tasks.vision
     options = vision.HandLandmarkerOptions(
         base_options=mp.tasks.BaseOptions(model_asset_path=args.model),
@@ -104,13 +104,13 @@ def track(args):
     )
     landmarker = vision.HandLandmarker.create_from_options(options)
 
-    emit({"type": "status", "message": "Ouverture de la caméra…"})
+    emit({"type": "status", "message": "Opening the camera..."})
     backend = args.backend if args.backend >= 0 else _default_backend(cv2)
     cap = cv2.VideoCapture(args.camera, backend)
     if not cap.isOpened():
         landmarker.close()
-        emit({"type": "error", "message": f"Impossible d'ouvrir la caméra {args.camera} "
-                                          "(débranchée ou utilisée par un autre logiciel ?)."})
+        emit({"type": "error", "message": f"Cannot open camera {args.camera} "
+                                          "(unplugged or used by another application?)."})
         return 2
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
@@ -135,7 +135,7 @@ def track(args):
             if not ok or frame is None:
                 failures += 1
                 if failures > 100:
-                    emit({"type": "error", "message": "La caméra ne renvoie plus d'image."})
+                    emit({"type": "error", "message": "The camera no longer returns images."})
                     return 3
                 time.sleep(0.01)
                 continue
@@ -192,7 +192,7 @@ def track(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Suivi des mains pour HandsHover")
+    parser = argparse.ArgumentParser(description="Hand tracking for HandsHover")
     parser.add_argument("--list-cameras", action="store_true")
     parser.add_argument("--model", default="")
     parser.add_argument("--camera", type=int, default=0)
@@ -212,7 +212,7 @@ def main():
             list_cameras()
             return 0
         return track(args)
-    except Exception as e:  # message lisible pour le module
+    except Exception as e:  # readable message for the module
         emit({"type": "error", "message": f"{type(e).__name__}: {e}"})
         return 1
 
