@@ -1,0 +1,10 @@
+# Dépendances Python du module « Contrôle gestuel ».
+# Elles sont installées à la demande, avec l'accord de l'utilisateur, au premier lancement.
+# Elles ne sont utilisées que par le processus de suivi (lancé avec PythonSlicer) :
+# OpenCV et MediaPipe ne sont jamais chargés dans Slicer lui-même.
+#
+# MediaPipe >= 0.10.31 : les versions antérieures exigent numpy<2 et rétrograderaient
+# le numpy fourni avec Slicer (>= 5.10).
+mediapipe>=0.10.31
+# Si MediaPipe n'installe pas OpenCV lui-même, le module ajoute opencv-python-headless.
+# Noms des caméras (installé sans dépendances) : cv2_enumerate_cameras
