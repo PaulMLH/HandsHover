@@ -31,7 +31,7 @@ HAND_CONNECTIONS = (
     (0, 17),
 )
 
-POSES = ("open", "pinch", "fist", "index", "v", "other")
+POSES = ("open", "pinch", "fist", "index", "v", "shaka", "other")
 
 POSE_LABELS_FR = {
     "open": "ouverte",
@@ -39,6 +39,7 @@ POSE_LABELS_FR = {
     "fist": "poing",
     "index": "index",
     "v": "V",
+    "shaka": "pouce+auriculaire",
     "other": "?",
 }
 
@@ -85,6 +86,13 @@ def finger_state(points, finger):
     return "amb"
 
 
+def thumb_extended(points, palm):
+    """Pouce sorti : son extrémité est loin du centre de la paume (> 0,8 longueur de paume)."""
+    n = float(len(PALM_POINTS))
+    center = tuple(sum(points[i][k] for i in PALM_POINTS) / n for k in range(3))
+    return _dist(points[THUMB_TIP], center) / palm > 0.8
+
+
 class HandClassifier:
     """Classe la pose d'une main. Garde un état pour l'hystérésis de la pince
     (seuil de fermeture plus serré que le seuil d'ouverture)."""
@@ -126,6 +134,9 @@ class HandClassifier:
             return "open"
         if idx == "ext" and mid == "ext" and rng != "ext" and pky != "ext":
             return "v"
+        if (pky == "ext" and idx != "ext" and mid != "ext" and rng != "ext"
+                and (idx, mid, rng).count("fold") >= 2 and thumb_extended(pts, palm)):
+            return "shaka"   # pouce + auriculaire
         if idx == "ext" and mid != "ext" and rng != "ext" and pky != "ext" and (mid == "fold" or rng == "fold"):
             return "index"
         if n_ext == 0 and n_fold >= 3:
@@ -133,50 +144,42 @@ class HandClassifier:
         return "other"
 
 
-class SideTracker:
-    """Décide quelle main est la gauche et laquelle est la droite.
+class ControlTracker:
+    """Choisit la main qui commande.
 
-    - Deux mains : celle de gauche dans l'image (en miroir) est la main gauche.
-    - Une main : on garde son identité si elle est proche de sa dernière position
-      (évite qu'elle change de côté en franchissant le milieu de l'image) ;
-      sinon, on se fie au côté de l'image.
-    - `invert` échange gauche et droite (caméra déjà en miroir, par exemple).
+    La première main vue garde le contrôle tant qu'elle reste dans l'image (suivie d'une
+    image à l'autre par sa position). L'autre main éventuelle est « secondaire » : elle ne
+    sert qu'aux gestes à deux mains. Si la main qui commande disparaît plus de `memory_s`,
+    la main restante prend le contrôle.
     """
 
-    def __init__(self, max_jump=0.2, memory_s=0.5):
+    def __init__(self, max_jump=0.25, memory_s=0.4):
         self.max_jump = max_jump
         self.memory_s = memory_s
-        self.last = {}
+        self.reset()
 
     def reset(self):
-        self.last = {}
+        self.pos = None
+        self.t = None
 
-    def assign(self, t, hands, invert=False):
+    def assign(self, t, hands):
         hands = sorted(hands, key=lambda h: -h.get("score", 0.0))[:2]
         centers = [palm_center(h["lm"]) for h in hands]
+        ctrl = None
+        remembered = self.pos is not None and t - self.t <= self.memory_s
+        if remembered and hands:
+            dists = [math.hypot(c[0] - self.pos[0], c[1] - self.pos[1]) for c in centers]
+            i = min(range(len(hands)), key=lambda k: dists[k])
+            if dists[i] <= self.max_jump:
+                ctrl = i
+        if ctrl is None and hands and not remembered:
+            ctrl = 0   # pas de main de contrôle récente : la plus sûre prend le contrôle
         result = {}
-        if len(hands) == 2:
-            left_first = centers[0][0] <= centers[1][0]
-            order = (0, 1) if left_first else (1, 0)
-            sides = ("R", "L") if invert else ("L", "R")
-            result[sides[0]] = hands[order[0]]
-            result[sides[1]] = hands[order[1]]
-        elif len(hands) == 1:
-            cx, cy = centers[0]
-            best = None
-            for side, (tl, xl, yl) in self.last.items():
-                if t - tl <= self.memory_s:
-                    d = math.hypot(cx - xl, cy - yl)
-                    if d <= self.max_jump and (best is None or d < best[1]):
-                        best = (side, d)
-            if best is not None:
-                side = best[0]
-            else:
-                side = "L" if cx < 0.5 else "R"
-                if invert:
-                    side = "R" if side == "L" else "L"
-            result[side] = hands[0]
-        for side, h in result.items():
-            cx, cy = palm_center(h["lm"])
-            self.last[side] = (t, cx, cy)
+        if ctrl is not None:
+            result["C"] = hands[ctrl]
+            self.pos = centers[ctrl]
+            self.t = t
+        others = [h for k, h in enumerate(hands) if k != ctrl]
+        if others:
+            result["S"] = others[0]
         return result

@@ -73,6 +73,8 @@ class SlicerActions:
                 self.scroll(event[1], event[2])
             elif kind == "wl":
                 self.windowLevel(event[1], event[2], event[3])
+            elif kind == "slice_zoom":
+                self.sliceZoom(event[1], event[2])
             elif kind == "wl_reset":
                 self.resetWindowLevel(event[1])
             elif kind == "rotate":
@@ -103,6 +105,15 @@ class SlicerActions:
             logic.SnapSliceOffsetToIJK()
         except Exception:
             pass
+
+    def sliceZoom(self, view, factor):
+        """factor > 1 = zoom avant (le champ de vue de la coupe diminue)."""
+        logic = self.sliceLogic(view)
+        if logic is None or factor <= 0:
+            return
+        node = logic.GetSliceNode()
+        fov = node.GetFieldOfView()
+        node.SetFieldOfView(fov[0] / factor, fov[1] / factor, fov[2])
 
     def _backgroundDisplay(self, view):
         logic = self.sliceLogic(view)

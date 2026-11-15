@@ -41,11 +41,11 @@ DEFAULT_SETTINGS = {
     "cameraName": "",
     "cameraIndex": 0,
     "cameraBackend": -1,
-    "invertHands": False,
     "invertScroll": False,
     "preview": True,
-    "scrollStepSlow": 2.0,     # % de la hauteur d'image par coupe
-    "scrollStepFast": 0.5,
+    "scrollStep": 2.0,         # % de la hauteur d'image par coupe (geste lent)
+    "scrollAccel": 4.0,        # multiplicateur maximal pour un geste rapide
+    "swipeDistance": 15.0,     # % de la largeur d'image pour un balayage en V
     "contrastGain": 1.0,
     "rotateGain": 180.0,
     "zoomGain": 1.0,
@@ -56,33 +56,32 @@ DEFAULT_SETTINGS = {
     "modelPath": "",
 }
 
-BASE_MOUSE_ZONE = (0.40, 0.15, 0.95, 0.80)
+BASE_MOUSE_ZONE = (0.25, 0.15, 0.75, 0.80)
 
 GESTURES_HTML = """
-<p><b>Pince</b> = signe « OK » (pouce et index joints, trois autres doigts tendus).
-Les gestes « maintenus » remplissent une jauge dans le bandeau.</p>
+<p>Tout se fait <b>à une main</b> : la première main vue commande, l'autre est ignorée
+(sauf pour les deux gestes à deux mains).<br>
+<b>Pince</b> = signe « OK » (pouce et index joints, trois autres doigts tendus).</p>
 <table border="0" cellspacing="2" cellpadding="3">
-<tr><td colspan="2"><b>Partout</b></td></tr>
-<tr><td>Deux index levés, 1 s</td><td>Pause / reprise</td></tr>
-<tr><td>Index gauche levé, 0,5 s</td><td>Vue suivante : 3D → Red → Green → Yellow</td></tr>
-<tr><td>V gauche, 0,5 s</td><td>Entrer / sortir du mode souris</td></tr>
+<tr><td colspan="2"><b>À deux mains (partout)</b></td></tr>
+<tr><td>Deux poings fermés, 1 s</td><td>Pause des commandes / réactivation</td></tr>
+<tr><td>Deux mains ouvertes, 1 s</td><td>Entrer / sortir du mode souris</td></tr>
 <tr><td colspan="2"><b>Vue 3D</b></td></tr>
-<tr><td>Poing gauche + déplacer</td><td>Rotation</td></tr>
-<tr><td>Poing droit + déplacer</td><td>Déplacer le modèle</td></tr>
-<tr><td>Pince gauche + haut/bas</td><td>Zoom rapide</td></tr>
-<tr><td>Pince droite + haut/bas</td><td>Zoom fin</td></tr>
-<tr><td>Index droit levé, 1 s</td><td>Recentrer</td></tr>
+<tr><td>V + balayage horizontal</td><td>Vue suivante (droite) / précédente (gauche)</td></tr>
+<tr><td>Poing + haut/bas</td><td>Zoom avant / arrière</td></tr>
+<tr><td>Pince + déplacer</td><td>Rotation du modèle</td></tr>
+<tr><td>Pouce + auriculaire + déplacer</td><td>Déplacer le modèle</td></tr>
 <tr><td colspan="2"><b>Vues 2D (Red, Green, Yellow)</b></td></tr>
-<tr><td>Pince gauche + haut/bas</td><td>Défilement rapide</td></tr>
-<tr><td>Pince droite + haut/bas</td><td>Défilement lent</td></tr>
-<tr><td>Poing droit + déplacer</td><td>Contraste (horizontal), luminosité (vertical)</td></tr>
-<tr><td>Index droit levé, 1 s</td><td>Contraste d'origine</td></tr>
+<tr><td>V + balayage horizontal</td><td>Vue suivante / précédente</td></tr>
+<tr><td>Pince + haut/bas</td><td>Défilement (accéléré si le geste est rapide)</td></tr>
+<tr><td>Poing + haut/bas</td><td>Zoom avant / arrière</td></tr>
+<tr><td>Pouce + auriculaire + déplacer</td><td>Contraste (horizontal), luminosité (vertical)</td></tr>
 <tr><td colspan="2"><b>Mode souris</b></td></tr>
-<tr><td>Main droite</td><td>Pointeur</td></tr>
-<tr><td>Pince droite brève</td><td>Clic gauche (deux rapides = double-clic)</td></tr>
-<tr><td>Pince droite + déplacer</td><td>Glisser</td></tr>
-<tr><td>Pince gauche brève</td><td>Clic droit</td></tr>
-<tr><td>Pince gauche + haut/bas</td><td>Molette</td></tr>
+<tr><td>Main ouverte</td><td>Pointeur</td></tr>
+<tr><td>Pince brève</td><td>Clic gauche (deux rapides = double-clic)</td></tr>
+<tr><td>Pince + déplacer</td><td>Glisser</td></tr>
+<tr><td>Poing bref</td><td>Clic droit</td></tr>
+<tr><td>V + haut/bas</td><td>Molette</td></tr>
 </table>
 """
 
@@ -181,9 +180,6 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
         cameraRow.addWidget(self.refreshButton)
         form.addRow("Caméra :", cameraRow)
 
-        self.invertHandsCheck = qt.QCheckBox("Inverser gauche / droite")
-        self.invertHandsCheck.toolTip = "À cocher si les étiquettes G / D de l'aperçu sont inversées"
-        form.addRow(self.invertHandsCheck)
 
         self.previewCheck = qt.QCheckBox("Afficher l'image de la caméra")
         form.addRow(self.previewCheck)
@@ -219,14 +215,16 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
             settingsForm.addRow(label, slider)
             self.sliders[key] = slider
 
-        addSlider("scrollStepSlow", "Défilement lent :", 0.5, 6.0, 0.1, 1, " % / coupe",
-                  "Course de la main (en % de la hauteur de l'image) pour avancer d'une coupe. Plus grand = plus fin.")
-        addSlider("scrollStepFast", "Défilement rapide :", 0.1, 2.0, 0.05, 2, " % / coupe",
-                  "Course de la main pour une coupe en défilement rapide.")
+        addSlider("scrollStep", "Défilement :", 0.5, 6.0, 0.1, 1, " % / coupe",
+                  "Course de la main (en % de la hauteur de l'image) pour avancer d'une coupe, geste lent. Plus grand = plus fin.")
+        addSlider("scrollAccel", "Accélération :", 1.0, 8.0, 0.5, 1, " ×",
+                  "Multiplicateur maximal du défilement quand le geste est rapide (1 = pas d'accélération).")
+        addSlider("swipeDistance", "Balayage en V :", 5.0, 35.0, 1.0, 0, " %",
+                  "Distance horizontale (en % de la largeur de l'image) pour changer de vue. Plus grand = moins de changements involontaires.")
         addSlider("contrastGain", "Contraste :", 0.1, 3.0, 0.1, 1, " ×", "Sensibilité du réglage de contraste / luminosité.")
         addSlider("rotateGain", "Rotation 3D :", 45, 540, 15, 0, " °",
                   "Degrés de rotation pour une traversée complète de l'image.")
-        addSlider("zoomGain", "Zoom 3D :", 0.2, 3.0, 0.1, 1, " ×", "Sensibilité du zoom.")
+        addSlider("zoomGain", "Zoom :", 0.2, 3.0, 0.1, 1, " ×", "Sensibilité du zoom.")
         addSlider("panGain", "Déplacement 3D :", 0.2, 3.0, 0.1, 1, " ×", "Sensibilité du déplacement du modèle.")
         addSlider("smoothing", "Lissage :", 0.3, 5.0, 0.1, 1, "",
                   "Plus petit = plus stable mais plus lent ; plus grand = plus réactif mais plus de tremblement.")
@@ -256,7 +254,6 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
         self.layout.addStretch(1)
 
         # ---- État initial et connexions
-        self.invertHandsCheck.checked = getSetting("invertHands")
         self.invertScrollCheck.checked = getSetting("invertScroll")
         self.previewCheck.checked = getSetting("preview")
         savedName = getSetting("cameraName")
@@ -269,7 +266,6 @@ class HandsHoverWidget(ScriptedLoadableModuleWidget):
         self.enableButton.connect("toggled(bool)", self.onEnableToggled)
         self.refreshButton.connect("clicked()", self.onRefreshCameras)
         self.cameraCombo.connect("currentIndexChanged(int)", self.onCameraChanged)
-        self.invertHandsCheck.connect("toggled(bool)", lambda v: self.onSettingChanged("invertHands", v))
         self.invertScrollCheck.connect("toggled(bool)", lambda v: self.onSettingChanged("invertScroll", v))
         self.previewCheck.connect("toggled(bool)", self.onPreviewToggled)
         self.resetSettingsButton.connect("clicked()", self.onResetSettings)
@@ -599,12 +595,13 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
     # -------------------------------------------------------------- réglages
     def applySettings(self, s):
         e = self.pipeline.engine.cfg
-        e.scroll_step_slow = s["scrollStepSlow"] / 100.0
-        e.scroll_step_fast = s["scrollStepFast"] / 100.0
+        e.scroll_step = s["scrollStep"] / 100.0
+        e.scroll_accel_max = s["scrollAccel"]
+        e.swipe_distance = s["swipeDistance"] / 100.0
         e.invert_scroll = bool(s["invertScroll"])
         e.rotate_gain_deg = s["rotateGain"]
-        e.zoom_gain_fast = 4.0 * s["zoomGain"]
-        e.zoom_gain_fine = 1.5 * s["zoomGain"]
+        e.zoom_gain = 3.0 * s["zoomGain"]
+        e.slice_zoom_gain = 3.0 * s["zoomGain"]
         e.pan_gain = s["panGain"]
         e.click_max_s = s["clickMaxMs"] / 1000.0
         x0, y0, x1, y1 = BASE_MOUSE_ZONE
@@ -612,7 +609,6 @@ class HandsHoverLogic(ScriptedLoadableModuleLogic):
         k = s["mouseZoneSize"]
         hw, hh = (x1 - x0) / 2.0 * k, (y1 - y0) / 2.0 * k
         e.mouse_zone = (max(0.0, cx - hw), max(0.0, cy - hh), min(1.0, cx + hw), min(1.0, cy + hh))
-        self.pipeline.invert_hands = bool(s["invertHands"])
         self.pipeline.set_filter(min_cutoff=s["smoothing"])
         self.actions.wl_gain = s["contrastGain"]
 
@@ -870,6 +866,11 @@ class HandsHoverTest(ScriptedLoadableModuleTest):
         self.assertGreater(display.GetWindow(), window0)
         actions.resetWindowLevel("Red")
         self.assertAlmostEqual(display.GetWindow(), window0, places=1)
+
+        sliceNode = sliceLogic.GetSliceNode()
+        fov0 = sliceNode.GetFieldOfView()[0]
+        actions.sliceZoom("Red", 2.0)
+        self.assertAlmostEqual(sliceNode.GetFieldOfView()[0], fov0 / 2.0, places=3)
 
         actions.rotate(10.0, 5.0)
         actions.zoom(1.2)

@@ -32,6 +32,7 @@ POSE_FLEXION = {
     "index": {"index": EXT, "middle": FOLD, "ring": FOLD, "pinky": FOLD},
     "v": {"index": EXT, "middle": EXT, "ring": FOLD, "pinky": FOLD},
     "pinch": {"index": OK_CURL, "middle": EXT, "ring": EXT, "pinky": EXT},
+    "shaka": {"index": FOLD, "middle": FOLD, "ring": FOLD, "pinky": EXT},
 }
 
 
@@ -70,7 +71,7 @@ def _thumb_towards(tip):
 def local_hand(pose):
     flex = POSE_FLEXION[pose]
     fingers = {f: _finger(MCP[f], LENGTHS[f], flex[f]) for f in ORDER}
-    if pose == "open":
+    if pose in ("open", "shaka"):
         tip = _add(THUMB_CMC, _scale((0.8, 0.6, 0.0), sum(THUMB_LENGTHS)))
     elif pose == "pinch":
         tip = _add(fingers["index"][3], (0.006, 0.0, 0.0))

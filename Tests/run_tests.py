@@ -1,4 +1,4 @@
-"""Lance les tests du moteur de gestes sans Slicer :  python Tests/run_tests.py"""
+"""Lance les tests du moteur de gestes (v0.2) sans Slicer :  python Tests/run_tests.py"""
 
 import os
 import sys

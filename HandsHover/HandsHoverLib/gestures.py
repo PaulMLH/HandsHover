@@ -1,18 +1,23 @@
-"""Moteur de gestes : transforme les poses et positions des mains en commandes.
+"""Moteur de gestes (v0.2, tout à une main) : transforme les poses et positions des mains
+en commandes.
 
-Python pur, sans Slicer : testable seul (voir Tests/test_engine.py).
+Python pur, sans Slicer : testable seul (voir Tests/run_tests.py).
 
-Le moteur produit des « événements » (tuples) que le module Slicer exécute :
+Une seule main commande (« C ») : la première vue, qui garde le contrôle tant qu'elle reste
+dans l'image. L'autre main éventuelle (« S ») ne sert qu'aux deux gestes à deux mains :
+    deux poings fermés 1 s   -> pause / réactivation des commandes
+    deux mains ouvertes 1 s  -> entrer / sortir du mode souris
+
+Événements produits (tuples) :
     ("mode", mode, paused)            mode = "3D" | "Red" | "Green" | "Yellow" | "Mouse"
     ("progress", key, fraction)       jauge d'un geste maintenu (key None = aucune)
     ("action", kind | None)           action continue en cours (pour l'affichage)
-    ("scroll", view, n)               n coupes (+ = vers le haut de la main)
+    ("scroll", view, n)               n coupes (+ = main qui monte)
+    ("slice_zoom", view, factor)      > 1 = zoom avant sur la coupe
     ("wl", view, dx, dy)              contraste / luminosité (déplacements normalisés)
-    ("wl_reset", view)
     ("rotate", d_azimuth, d_elevation)   en degrés
     ("pan", dx, dy)                   déplacement normalisé de la main
-    ("zoom", factor)                  > 1 = zoom avant
-    ("recenter",)
+    ("zoom", factor)                  zoom de la vue 3D, > 1 = zoom avant
     ("pointer", u, v)                 position du pointeur dans la fenêtre (0..1)
     ("mouse_button", "left"|"right", "down"|"up")
     ("mouse_click", "left"|"right")
@@ -23,71 +28,61 @@ import math
 from dataclasses import dataclass, field
 
 from .filters import OneEuroFilter2D
-from .hands import HandClassifier, SideTracker, palm_center
+from .hands import ControlTracker, HandClassifier, palm_center
 
 VIEW_ORDER = ("3D", "Red", "Green", "Yellow")
 SLICE_VIEWS = ("Red", "Green", "Yellow")
 MOUSE = "Mouse"
+ROLES = ("C", "S")
 
 HOLD_LABELS_FR = {
-    "pause": "Pause / reprise",
-    "next_view": "Vue suivante",
+    "pause": "Pause / réactivation",
     "mouse_toggle": "Mode souris",
-    "reset": "Réinitialiser",
 }
 
-# (côté, pose) -> action continue, selon le mode
-ENGAGE_3D = {
-    ("L", "fist"): "rotate",
-    ("R", "fist"): "pan",
-    ("L", "pinch"): "zoom_fast",
-    ("R", "pinch"): "zoom_fine",
-}
-ENGAGE_SLICE = {
-    ("L", "pinch"): "scroll_fast",
-    ("R", "pinch"): "scroll_slow",
-    ("R", "fist"): "wl",
-}
-ENGAGE_MOUSE = {
-    ("R", "pinch"): "lbutton",
-    ("L", "pinch"): "rbutton",
-}
+# pose de la main qui commande -> action continue, selon le mode
+ENGAGE_3D = {"fist": "zoom", "pinch": "rotate", "shaka": "pan", "v": "swipe"}
+ENGAGE_SLICE = {"pinch": "scroll", "fist": "slice_zoom", "shaka": "wl", "v": "swipe"}
+ENGAGE_MOUSE = {"pinch": "lbutton", "fist": "rbutton", "v": "wheel"}
 
 ACTION_LABELS_FR = {
+    "zoom": "zoom",
     "rotate": "rotation",
     "pan": "déplacement",
-    "zoom_fast": "zoom rapide",
-    "zoom_fine": "zoom fin",
-    "scroll_fast": "défilement rapide",
-    "scroll_slow": "défilement lent",
+    "swipe": "changement de vue",
+    "scroll": "défilement",
+    "slice_zoom": "zoom",
     "wl": "contraste",
     "lbutton": "clic gauche",
-    "rbutton": "clic droit / molette",
+    "rbutton": "clic droit",
+    "wheel": "molette",
 }
 
 
 @dataclass
 class EngineConfig:
-    # Durées des gestes maintenus (secondes)
+    # Gestes à deux mains maintenus (secondes)
     hold_pause_s: float = 1.0
-    hold_next_view_s: float = 0.5
-    hold_mouse_s: float = 0.5
-    hold_reset_s: float = 1.0
-    # Défilement : course de main (fraction de la hauteur d'image) pour une coupe
-    scroll_step_slow: float = 0.02
-    scroll_step_fast: float = 0.005
+    hold_mouse_s: float = 1.0
+    # Défilement : course de main (fraction de la hauteur d'image) pour une coupe, au ralenti
+    scroll_step: float = 0.02
+    scroll_accel_max: float = 4.0       # multiplicateur maximal quand le geste est rapide
+    scroll_accel_speed: float = 0.25    # vitesse (hauteurs d'image / s) au-delà de laquelle on accélère
     invert_scroll: bool = False
+    # Zoom (poing + haut/bas)
+    zoom_gain: float = 3.0
+    slice_zoom_gain: float = 3.0
     # Vue 3D
     rotate_gain_deg: float = 180.0      # degrés pour une traversée complète de l'image
     pan_gain: float = 1.0
-    zoom_gain_fast: float = 4.0
-    zoom_gain_fine: float = 1.5
+    # Balayage en V
+    swipe_distance: float = 0.15        # fraction de la largeur d'image
+    swipe_window_s: float = 0.6
     # Souris
     click_max_s: float = 0.4
     drag_threshold: float = 0.03
-    wheel_threshold: float = 0.02
     wheel_step: float = 0.03
-    mouse_zone: tuple = (0.40, 0.15, 0.95, 0.80)   # gauche, haut, droite, bas (image en miroir)
+    mouse_zone: tuple = (0.25, 0.15, 0.75, 0.80)   # gauche, haut, droite, bas (image en miroir)
 
 
 @dataclass
@@ -133,131 +128,112 @@ class GestureEngine:
 
     # ------------------------------------------------------------------ état
     def reset(self):
-        """Remet à zéro. Renvoie les événements nécessaires (relâcher un bouton…)."""
-        events = []
-        action = getattr(self, "action", None)
-        if action and action["kind"] == "lbutton" and action.get("dragging"):
-            events.append(("mouse_button", "left", "up"))
+        events = self.release()
         self.mode = "3D"
         self.prev_view = "3D"
         self.paused = False
-        self.action = None
-        self.holds = {}
+        self.hold_start = {}
         self.hold_lock = False
         events.append(("mode", self.mode, self.paused))
         return events
 
     def release(self):
-        """Termine proprement l'action en cours (désactivation, perte caméra)."""
+        """Termine proprement l'action en cours (désactivation, pause…)."""
         events = []
-        if self.action is not None:
-            if self.action["kind"] == "lbutton" and self.action.get("dragging"):
+        action = getattr(self, "action", None)
+        if action is not None:
+            if action["kind"] == "lbutton" and action.get("dragging"):
                 events.append(("mouse_button", "left", "up"))
-            self.action = None
             events.append(("action", None))
-        self.holds = {}
+        self.action = None
         return events
 
     # ------------------------------------------------------------- principal
     def update(self, t, hands):
-        """hands : dict {"L": HandObs, "R": HandObs} (côté absent = main non vue)."""
+        """hands : {"C": HandObs (main qui commande), "S": HandObs (autre main)} ; absent = non vue."""
         events = []
-        left = hands.get("L")
-        right = hands.get("R")
+        c = hands.get("C")
+        s = hands.get("S")
 
-        # 1. Poursuivre ou terminer l'action continue en cours
-        if self.action is not None:
-            owner = hands.get(self.action["side"])
-            if owner is None or owner.pose != self.action["pose"]:
-                events += self._end_action(t, owner)
-            else:
-                events += self._continue_action(owner)
-
-        # 2. Gestes maintenus (seulement sans action en cours)
-        fired = None
-        progress = (None, 0.0)
-        if self.action is None:
-            fired, progress = self._update_holds(t, left, right)
-        else:
-            self.holds = {}
+        # 1. Gestes à deux mains (prioritaires)
+        pair = self._pair(c, s)
+        if pair and self.action is not None:
+            events += self.release()   # le début d'un geste à deux mains annule l'action en cours
+        fired, progress = self._update_holds(t, pair)
         events.append(("progress", progress[0], progress[1]))
         if fired:
             events += self._fire(fired)
 
-        # 3. Nouvelle action continue
-        if self.action is None and not self.paused and not fired:
-            events += self._try_engage(t, hands)
+        # 2. Action continue de la main qui commande
+        if self.action is not None:
+            a = self.action
+            keeps = c is not None and (c.pose == a["pose"] or (a["kind"] == "swipe" and c.pose == "other"))
+            if keeps:
+                events += self._continue_action(t, c)
+            else:
+                events += self._end_action(t, c)
 
-        # 4. Pointeur du mode souris
+        if self.action is None and c is not None and not self.paused and not pair and not fired:
+            events += self._try_engage(t, c)
+
+        # 3. Pointeur du mode souris
         if (self.mode == MOUSE and not self.paused and self.action is None
-                and right is not None and right.pose != "pinch"):
-            u, v = self._to_zone(right.x, right.y)
-            events.append(("pointer", u, v))
+                and c is not None and c.pose not in ("pinch", "fist", "v")):
+            events.append(("pointer",) + self._to_zone(c.x, c.y))
         return events
 
-    # ---------------------------------------------------- gestes maintenus
-    def _update_holds(self, t, left, right):
-        lp = left.pose if left else None
-        rp = right.pose if right else None
+    # ----------------------------------------------------- gestes à deux mains
+    @staticmethod
+    def _pair(c, s):
+        if c is None or s is None:
+            return None
+        if c.pose == "fist" and s.pose == "fist":
+            return "pause"
+        if c.pose == "open" and s.pose == "open":
+            return "mouse_toggle"
+        return None
 
-        # Après un geste déclenché, attendre que plus aucune main ne fasse index / V
+    def _update_holds(self, t, pair):
         if self.hold_lock:
-            if lp not in ("index", "v") and rp not in ("index", "v"):
+            if pair is None:
                 self.hold_lock = False
-            else:
-                self.holds = {}
-                return None, (None, 0.0)
-
-        cands = {}
-        if lp == "index" and rp == "index":
-            cands["pause"] = self.cfg.hold_pause_s
-        elif not self.paused:
-            if lp == "index" and self.mode != MOUSE:
-                cands["next_view"] = self.cfg.hold_next_view_s
-            if lp == "v":
-                cands["mouse_toggle"] = self.cfg.hold_mouse_s
-            if rp == "index" and self.mode != MOUSE:
-                cands["reset"] = self.cfg.hold_reset_s
-
-        for key in list(self.holds):
-            if key not in cands:
-                del self.holds[key]
-
-        best = (None, 0.0)
-        for key, duration in cands.items():
-            start = self.holds.setdefault(key, t)
-            frac = (t - start) / duration if duration > 0 else 1.0
-            if frac >= 1.0:
-                self.holds = {}
-                self.hold_lock = True
-                return key, (key, 1.0)
-            if frac > best[1] or best[0] is None:
-                best = (key, frac)
-        return None, best
+            self.hold_start = {}
+            return None, (None, 0.0)
+        if pair is None or (self.paused and pair != "pause"):
+            self.hold_start = {}
+            return None, (None, 0.0)
+        duration = self.cfg.hold_pause_s if pair == "pause" else self.cfg.hold_mouse_s
+        start = self.hold_start.setdefault(pair, t)
+        for key in list(self.hold_start):
+            if key != pair:
+                del self.hold_start[key]
+        frac = (t - start) / duration if duration > 0 else 1.0
+        if frac >= 1.0:
+            self.hold_start = {}
+            self.hold_lock = True   # relâcher avant de pouvoir recommencer
+            return pair, (pair, 1.0)
+        return None, (pair, frac)
 
     def _fire(self, key):
         events = []
         if key == "pause":
             self.paused = not self.paused
-            events.append(("mode", self.mode, self.paused))
-        elif key == "next_view":
-            if self.mode in VIEW_ORDER:
-                i = VIEW_ORDER.index(self.mode)
-                self.mode = VIEW_ORDER[(i + 1) % len(VIEW_ORDER)]
-                events.append(("mode", self.mode, self.paused))
+            events += self.release()
         elif key == "mouse_toggle":
             if self.mode == MOUSE:
                 self.mode = self.prev_view
             else:
                 self.prev_view = self.mode
                 self.mode = MOUSE
-            events.append(("mode", self.mode, self.paused))
-        elif key == "reset":
-            if self.mode == "3D":
-                events.append(("recenter",))
-            elif self.mode in SLICE_VIEWS:
-                events.append(("wl_reset", self.mode))
+        events.append(("mode", self.mode, self.paused))
         return events
+
+    def _change_view(self, step):
+        if self.mode not in VIEW_ORDER:
+            return []
+        i = VIEW_ORDER.index(self.mode)
+        self.mode = VIEW_ORDER[(i + step) % len(VIEW_ORDER)]
+        return [("mode", self.mode, self.paused)]
 
     # ---------------------------------------------------- actions continues
     def _engage_table(self):
@@ -269,87 +245,94 @@ class GestureEngine:
             return ENGAGE_MOUSE
         return {}
 
-    def _try_engage(self, t, hands):
-        table = self._engage_table()
-        for side in ("L", "R"):
-            h = hands.get(side)
-            if h is None:
-                continue
-            kind = table.get((side, h.pose))
-            if kind:
-                self.action = {
-                    "kind": kind, "side": side, "pose": h.pose, "t0": t,
-                    "x0": h.x, "y0": h.y, "lx": h.x, "ly": h.y,
-                    "acc": 0.0, "dragging": False, "wheeling": False,
-                }
-                return [("action", kind)]
-        return []
+    def _try_engage(self, t, c):
+        kind = self._engage_table().get(c.pose)
+        if not kind:
+            return []
+        self.action = {
+            "kind": kind, "pose": c.pose, "t0": t, "lt": t,
+            "x0": c.x, "y0": c.y, "lx": c.x, "ly": c.y,
+            "acc": 0.0, "dragging": False, "moved": 0.0,
+            "history": [(t, c.x, c.y)], "swiped": False,
+        }
+        return [("action", kind)]
 
-    def _continue_action(self, h):
+    def _continue_action(self, t, c):
         a = self.action
         cfg = self.cfg
-        dx = h.x - a["lx"]
-        dy = h.y - a["ly"]
-        a["lx"], a["ly"] = h.x, h.y
+        dx = c.x - a["lx"]
+        dy = c.y - a["ly"]
+        dt = max(t - a["lt"], 1e-3)
+        a["lx"], a["ly"], a["lt"] = c.x, c.y, t
+        a["moved"] = max(a["moved"], math.hypot(c.x - a["x0"], c.y - a["y0"]))
         kind = a["kind"]
         events = []
 
-        if kind in ("scroll_fast", "scroll_slow"):
-            step = cfg.scroll_step_fast if kind == "scroll_fast" else cfg.scroll_step_slow
+        if kind == "swipe":
+            if not a["swiped"]:
+                hist = [h for h in a["history"] if t - h[0] <= cfg.swipe_window_s]
+                hist.append((t, c.x, c.y))
+                a["history"] = hist
+                for _t0, x0, y0 in hist:
+                    sx, sy = c.x - x0, c.y - y0
+                    if abs(sx) >= cfg.swipe_distance and abs(sx) > 2.0 * abs(sy):
+                        a["swiped"] = True   # un seul changement par V
+                        events += self._change_view(1 if sx > 0 else -1)
+                        break
+        elif kind == "scroll":
+            speed = abs(dy) / dt
+            accel = min(cfg.scroll_accel_max, max(1.0, speed / max(cfg.scroll_accel_speed, 1e-6)))
             sign = 1.0 if cfg.invert_scroll else -1.0   # main qui monte (dy < 0) = coupes +
-            a["acc"] += sign * dy / max(step, 1e-6)
+            a["acc"] += sign * dy * accel / max(cfg.scroll_step, 1e-6)
             n = int(a["acc"])
             if n:
                 a["acc"] -= n
                 events.append(("scroll", self.mode, n))
+        elif kind == "slice_zoom":
+            if dy:
+                events.append(("slice_zoom", self.mode, math.exp(-dy * cfg.slice_zoom_gain)))
         elif kind == "wl":
             if dx or dy:
                 events.append(("wl", self.mode, dx, dy))
+        elif kind == "zoom":
+            if dy:
+                events.append(("zoom", math.exp(-dy * cfg.zoom_gain)))
         elif kind == "rotate":
             if dx or dy:
                 events.append(("rotate", -dx * cfg.rotate_gain_deg, dy * cfg.rotate_gain_deg))
         elif kind == "pan":
             if dx or dy:
                 events.append(("pan", dx * cfg.pan_gain, dy * cfg.pan_gain))
-        elif kind in ("zoom_fast", "zoom_fine"):
-            k = cfg.zoom_gain_fast if kind == "zoom_fast" else cfg.zoom_gain_fine
-            if dy:
-                events.append(("zoom", math.exp(-dy * k)))
         elif kind == "lbutton":
-            if not a["dragging"]:
-                moved = math.hypot(h.x - a["x0"], h.y - a["y0"])
-                if moved > cfg.drag_threshold:
-                    a["dragging"] = True
-                    # bouton enfoncé à la position figée au début de la pince
-                    events.append(("mouse_button", "left", "down"))
+            if not a["dragging"] and a["moved"] > cfg.drag_threshold:
+                a["dragging"] = True
+                # bouton enfoncé à la position figée au début de la pince
+                events.append(("mouse_button", "left", "down"))
             if a["dragging"]:
-                u, v = self._to_zone(h.x, h.y)
-                events.append(("pointer", u, v))
-        elif kind == "rbutton":
-            if not a["wheeling"] and abs(h.y - a["y0"]) > cfg.wheel_threshold:
-                a["wheeling"] = True
-                a["acc"] = 0.0
-            if a["wheeling"]:
-                a["acc"] += -dy / max(cfg.wheel_step, 1e-6)
-                n = int(a["acc"])
-                if n:
-                    a["acc"] -= n
-                    events.append(("wheel", n))
+                events.append(("pointer",) + self._to_zone(c.x, c.y))
+        elif kind == "wheel":
+            a["acc"] += -dy / max(cfg.wheel_step, 1e-6)
+            n = int(a["acc"])
+            if n:
+                a["acc"] -= n
+                events.append(("wheel", n))
+        # rbutton : rien pendant le geste (pointeur figé), le clic est décidé au relâchement
         return events
 
-    def _end_action(self, t, owner):
+    def _end_action(self, t, c):
         a = self.action
         self.action = None
         events = [("action", None)]
-        duration = t - a["t0"]
-        released = owner is not None   # pince relâchée (et pas main perdue)
+        released = c is not None   # geste relâché (et pas main perdue)
+        brief = (t - a["t0"]) <= self.cfg.click_max_s
+        still = a["moved"] <= self.cfg.drag_threshold
         if a["kind"] == "lbutton":
             if a["dragging"]:
                 events.append(("mouse_button", "left", "up"))
-            elif released and duration <= self.cfg.click_max_s:
+            elif released and brief:
                 events.append(("mouse_click", "left"))
         elif a["kind"] == "rbutton":
-            if not a["wheeling"] and released and duration <= self.cfg.click_max_s:
+            if released and brief and still:
                 events.append(("mouse_click", "right"))
         return events
 
@@ -372,25 +355,25 @@ class PipelineConfig:
 
 
 class GesturePipeline:
-    """Chaîne complète : mains brutes (sortie MediaPipe) -> côté -> pose -> lissage -> moteur."""
+    """Chaîne complète : mains brutes (sortie MediaPipe) -> rôle (commande / autre)
+    -> pose -> lissage -> moteur."""
 
     def __init__(self, config=None):
         self.cfg = config or PipelineConfig()
-        self.invert_hands = False
-        self.sides = SideTracker()
-        self.classifiers = {s: HandClassifier(self.cfg.pinch_on, self.cfg.pinch_off) for s in ("L", "R")}
-        self.debouncers = {s: PoseDebouncer(self.cfg.pose_confirm_s) for s in ("L", "R")}
-        self.filters = {s: OneEuroFilter2D(self.cfg.filter_min_cutoff, self.cfg.filter_beta) for s in ("L", "R")}
+        self.control = ControlTracker()
+        self.classifiers = {r: HandClassifier(self.cfg.pinch_on, self.cfg.pinch_off) for r in ROLES}
+        self.debouncers = {r: PoseDebouncer(self.cfg.pose_confirm_s) for r in ROLES}
+        self.filters = {r: OneEuroFilter2D(self.cfg.filter_min_cutoff, self.cfg.filter_beta) for r in ROLES}
         self.engine = GestureEngine(self.cfg.engine)
         self._last_obs = {}
 
     def reset(self):
-        self.sides.reset()
+        self.control.reset()
         self._last_obs = {}
-        for s in ("L", "R"):
-            self.classifiers[s].reset()
-            self.debouncers[s].reset()
-            self.filters[s].reset()
+        for r in ROLES:
+            self.classifiers[r].reset()
+            self.debouncers[r].reset()
+            self.filters[r].reset()
         return self.engine.reset()
 
     def set_filter(self, min_cutoff=None, beta=None):
@@ -400,31 +383,31 @@ class GesturePipeline:
     def process(self, t, raw_hands):
         """raw_hands : liste de dict {"lm": 21x[x,y,z], "wlm": 21x[x,y,z] | None, "score": float}.
 
-        Renvoie (événements, mains attribuées {côté: main brute}, infos {côté: dict})."""
-        assigned = self.sides.assign(t, raw_hands, self.invert_hands)
+        Renvoie (événements, mains par rôle {"C"|"S": main brute}, infos {rôle: dict})."""
+        assigned = self.control.assign(t, raw_hands)
         observations = {}
         info = {}
-        for side in ("L", "R"):
-            hand = assigned.get(side)
+        for role in ROLES:
+            hand = assigned.get(role)
             if hand is None:
-                last = self._last_obs.get(side)
-                if last is not None and t - last[0] <= self.cfg.missing_grace_s:
+                last = self._last_obs.get(role)
+                if role == "C" and last is not None and t - last[0] <= self.cfg.missing_grace_s:
                     # Perte de suivi très brève : on garde la dernière observation
-                    observations[side] = last[1]
+                    observations[role] = last[1]
                     continue
-                self._last_obs.pop(side, None)
-                self.debouncers[side].update(None, t)
-                self.classifiers[side].reset()
-                self.filters[side].reset()
+                self._last_obs.pop(role, None)
+                self.debouncers[role].update(None, t)
+                self.classifiers[role].reset()
+                self.filters[role].reset()
                 continue
-            raw_pose = self.classifiers[side].classify(hand["lm"], hand.get("wlm"))
-            pose = self.debouncers[side].update(raw_pose, t)
+            raw_pose = self.classifiers[role].classify(hand["lm"], hand.get("wlm"))
+            pose = self.debouncers[role].update(raw_pose, t)
             cx, cy = palm_center(hand["lm"])
-            fx, fy = self.filters[side](t, cx, cy)
-            info[side] = {"raw": raw_pose, "pose": pose, "x": fx, "y": fy}
+            fx, fy = self.filters[role](t, cx, cy)
+            info[role] = {"raw": raw_pose, "pose": pose, "x": fx, "y": fy}
             if pose is not None:
                 obs = HandObs(pose, fx, fy)
-                observations[side] = obs
-                self._last_obs[side] = (t, obs)
+                observations[role] = obs
+                self._last_obs[role] = (t, obs)
         events = self.engine.update(t, observations)
         return events, assigned, info

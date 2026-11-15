@@ -25,7 +25,7 @@ MODE_TEXT = {
     MOUSE: "MODE SOURIS",
 }
 
-SIDE_COLORS = {"L": "#3498db", "R": "#f39c12"}
+ROLE_COLORS = {"C": "#f39c12", "S": "#3498db"}   # orange = main qui commande, bleu = autre main
 
 
 class ModeBanner:
@@ -33,7 +33,7 @@ class ModeBanner:
 
     def __init__(self):
         mw = slicer.util.mainWindow()
-        self.toolbar = qt.QToolBar("Contrôle gestuel")
+        self.toolbar = qt.QToolBar("HandsHover")
         self.toolbar.setObjectName("HandsHoverToolBar")
         self.toolbar.setMovable(False)
         self.toolbar.setFloatable(False)
@@ -75,7 +75,7 @@ class ModeBanner:
         text = MODE_TEXT.get(mode, mode)
         if paused:
             self._style(MODE_COLORS["Pause"])
-            self.label.setText(f"PAUSE  ({text})  –  deux index levés pour reprendre")
+            self.label.setText(f"PAUSE  ({text})  –  deux poings fermés 1 s pour reprendre")
             return
         self._style(MODE_COLORS.get(mode, MODE_COLORS["Off"]))
         if action:
@@ -92,7 +92,7 @@ class ModeBanner:
 
     def setHands(self, info, fps=None):
         parts = []
-        for side, name in (("L", "G"), ("R", "D")):
+        for side, name in (("C", "Main"), ("S", "Autre main")):
             hand = info.get(side)
             if hand is None or hand.get("pose") is None:
                 parts.append(f"{name} : –")
@@ -194,7 +194,7 @@ class ViewHighlighter:
 
 
 def drawHandsOnPixmap(pixmap, assigned, info, mouseZone=None):
-    """Dessine le squelette des mains (bleu = gauche, orange = droite) et la zone souris."""
+    """Dessine le squelette des mains (orange = main qui commande, bleu = autre) et la zone souris."""
     w, h = pixmap.width(), pixmap.height()
     painter = qt.QPainter(pixmap)
     try:
@@ -206,7 +206,7 @@ def drawHandsOnPixmap(pixmap, assigned, info, mouseZone=None):
             painter.setPen(pen)
             painter.drawRect(int(x0 * w), int(y0 * h), int((x1 - x0) * w), int((y1 - y0) * h))
         for side, hand in assigned.items():
-            color = qt.QColor(SIDE_COLORS.get(side, "#ffffff"))
+            color = qt.QColor(ROLE_COLORS.get(side, "#ffffff"))
             pen = qt.QPen(color)
             pen.setWidth(2)
             painter.setPen(pen)
@@ -216,7 +216,7 @@ def drawHandsOnPixmap(pixmap, assigned, info, mouseZone=None):
             for x, y in pts:
                 painter.drawEllipse(qt.QPoint(x, y), 2, 2)
             pose = (info.get(side) or {}).get("pose")
-            label = ("G" if side == "L" else "D") + " " + POSE_LABELS_FR.get(pose, "…")
+            label = ("" if side == "C" else "autre : ") + POSE_LABELS_FR.get(pose, "…")
             painter.drawText(pts[0][0] + 6, pts[0][1] + 14, label)
     finally:
         painter.end()
